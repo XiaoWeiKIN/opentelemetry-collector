@@ -6,6 +6,8 @@ package internal // import "go.opentelemetry.io/collector/cmd/mdatagen/internal"
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -14,6 +16,8 @@ import (
 	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
+
+var reNonAlnum = regexp.MustCompile(`[^a-z0-9_]+`)
 
 type MetricName string
 
@@ -44,33 +48,24 @@ type Metric struct {
 
 	// Override the default prefix for the metric name.
 	Prefix string `mapstructure:"prefix"`
+
+	// Deprecation metadata for deprecated metrics
+	Deprecated *Deprecated `mapstructure:"deprecated,omitempty"`
 }
 
-type Stability struct {
-	Level component.StabilityLevel `mapstructure:"level"`
-	From  string                   `mapstructure:"from"`
-}
-
-func (s Stability) String() string {
-	if s.Level == component.StabilityLevelUndefined ||
-		s.Level == component.StabilityLevelStable {
-		return ""
-	}
-	if s.From != "" {
-		return fmt.Sprintf(" [%s since %s]", s.Level.String(), s.From)
-	}
-	return fmt.Sprintf(" [%s]", s.Level.String())
-}
-
-func (s *Stability) Unmarshal(parser *confmap.Conf) error {
-	if !parser.IsSet("level") {
-		return errors.New("missing required field: `stability.level`")
-	}
-	return parser.Unmarshal(s)
-}
-
-func (m *Metric) validate() error {
+func (m *Metric) validate(metricName MetricName, semConvVersion string) error {
 	var errs error
+
+	if m.Deprecated != nil {
+		if m.Stability != component.StabilityLevelDeprecated {
+			errs = errors.Join(errs, errors.New("`stability` must be `deprecated` when specifying a `deprecated` field"))
+		}
+
+		if err := m.Deprecated.validate(); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
+
 	if m.Sum == nil && m.Gauge == nil && m.Histogram == nil {
 		errs = errors.Join(errs, errors.New("missing metric type key, "+
 			"one of the following has to be specified: sum, gauge, histogram"))
@@ -78,6 +73,9 @@ func (m *Metric) validate() error {
 	if (m.Sum != nil && m.Gauge != nil) || (m.Sum != nil && m.Histogram != nil) || (m.Gauge != nil && m.Histogram != nil) {
 		errs = errors.Join(errs, errors.New("more than one metric type keys, "+
 			"only one of the following has to be specified: sum, gauge, histogram"))
+	}
+	if m.Stability == component.StabilityLevelUndefined {
+		errs = errors.Join(errs, errors.New("missing required field: `stability.level`"))
 	}
 	if m.Description == "" {
 		errs = errors.Join(errs, errors.New(`missing metric description`))
@@ -91,7 +89,47 @@ func (m *Metric) validate() error {
 	if m.Gauge != nil {
 		errs = errors.Join(errs, m.Gauge.Validate())
 	}
+	if m.SemanticConvention != nil {
+		if err := validateSemConvMetricURL(m.SemanticConvention.SemanticConventionRef, semConvVersion, string(metricName)); err != nil {
+			errs = errors.Join(errs, err)
+		}
+	}
 	return errs
+}
+
+func metricAnchor(metricName string) string {
+	m := strings.ToLower(strings.TrimSpace(metricName))
+	m = reNonAlnum.ReplaceAllString(m, "")
+	return "metric-" + m
+}
+
+// validateSemConvMetricURL verifies the URL matches exactly:
+// https://github.com/open-telemetry/semantic-conventions/blob/<semConvVersion>/*#metric-<metricName>
+func validateSemConvMetricURL(rawURL, semConvVersion, metricName string) error {
+	if strings.TrimSpace(rawURL) == "" {
+		return errors.New("url is empty")
+	}
+	if strings.TrimSpace(semConvVersion) == "" {
+		return errors.New("semConvVersion is empty")
+	}
+	if strings.TrimSpace(metricName) == "" {
+		return errors.New("metricName is empty")
+	}
+	semConvVersion = "v" + semConvVersion
+
+	anchor := metricAnchor(metricName)
+	// Build a strict regex that enforces https, repo, blob, given version, any doc path, and exact anchor.
+	pattern := fmt.Sprintf(`^https://github\.com/open-telemetry/semantic-conventions/blob/%s/[^#\s]+#%s$`,
+		semConvVersion,
+		anchor,
+	)
+	re := regexp.MustCompile(pattern)
+	if !re.MatchString(rawURL) {
+		return fmt.Errorf(
+			"invalid semantic-conventions URL: want https://github.com/open-telemetry/semantic-conventions/blob/%s/*#%s, got %q",
+			semConvVersion, anchor, rawURL)
+	}
+	return nil
 }
 
 func (m *Metric) Unmarshal(parser *confmap.Conf) error {

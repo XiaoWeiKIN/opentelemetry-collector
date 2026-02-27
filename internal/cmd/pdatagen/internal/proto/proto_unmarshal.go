@@ -6,7 +6,7 @@ package proto // import "go.opentelemetry.io/collector/internal/cmd/pdatagen/int
 import (
 	"fmt"
 
-	"go.opentelemetry.io/collector/internal/cmd/pdatagen/internal/template"
+	"go.opentelemetry.io/collector/internal/cmd/pdatagen/internal/tmplutil"
 )
 
 const unmarshalProtoFloat = `{{ if .repeated -}}
@@ -61,7 +61,9 @@ const unmarshalProtoFloat = `{{ if .repeated -}}
 		}
 		ov.{{ .fieldName }} = math.Float{{ .bitSize }}frombits(num)
 		orig.{{ .oneOfGroup }} = ov
-{{- else }}
+{{- else if .nullable -}}
+		orig.Set{{ .fieldName }}(math.Float{{ .bitSize }}frombits(num))
+{{- else -}}
 		orig.{{ .fieldName }} = math.Float{{ .bitSize }}frombits(num)
 {{- end }}{{- end }}`
 
@@ -173,7 +175,9 @@ const unmarshalProtoBool = `{{ if .repeated -}}
 		}
 		ov.{{ .fieldName }} = num != 0
 		orig.{{ .oneOfGroup }} = ov
-{{- else }}
+{{- else if .nullable -}}
+		orig.Set{{ .fieldName }}(num != 0)
+{{- else -}}
 		orig.{{ .fieldName }} = num != 0
 {{- end }}{{- end }}`
 
@@ -227,7 +231,9 @@ const unmarshalProtoVarint = `{{ if .repeated -}}
 		}
 		ov.{{ .fieldName }} = {{ .goType }}(num)
 		orig.{{ .oneOfGroup }} = ov
-{{- else }}
+{{- else if .nullable -}}
+		orig.Set{{ .fieldName }}({{ .goType }}(num))
+{{- else -}}
 		orig.{{ .fieldName }} = {{ .goType }}(num)
 {{- end }}{{- end }}`
 
@@ -385,7 +391,9 @@ const unmarshalProtoSignedVarint = `{{ if .repeated -}}
 		}
 		ov.{{ .fieldName }} = int{{ .bitSize }}(uint{{ .bitSize }}(num >> 1) ^ uint{{ .bitSize }}(int{{ .bitSize }}((num&1)<<{{ sub .bitSize 1 }})>>{{ sub .bitSize 1 }}))
 		orig.{{ .oneOfGroup }} = ov
-{{- else }}
+{{- else if .nullable -}}
+		orig.Set{{ .fieldName }}(int{{ .bitSize }}(uint{{ .bitSize }}(num >> 1) ^ uint{{ .bitSize }}(int{{ .bitSize }}((num&1)<<{{ sub .bitSize 1 }})>>{{ sub .bitSize 1 }})))
+{{- else -}}
 		orig.{{ .fieldName }} = int{{ .bitSize }}(uint{{ .bitSize }}(num >> 1) ^ uint{{ .bitSize }}(int{{ .bitSize }}((num&1)<<{{ sub .bitSize 1 }})>>{{ sub .bitSize 1 }}))
 {{- end }}{{- end }}`
 
@@ -393,21 +401,21 @@ func (pf *Field) GenUnmarshalProto() string {
 	tf := pf.getTemplateFields()
 	switch pf.Type {
 	case TypeDouble, TypeFloat:
-		return template.Execute(template.Parse("unmarshalProtoFloat", []byte(unmarshalProtoFloat)), tf)
+		return tmplutil.Execute(tmplutil.Parse("unmarshalProtoFloat", []byte(unmarshalProtoFloat)), tf)
 	case TypeFixed64, TypeSFixed64, TypeFixed32, TypeSFixed32:
-		return template.Execute(template.Parse("unmarshalProtoFixed", []byte(unmarshalProtoFixed)), tf)
+		return tmplutil.Execute(tmplutil.Parse("unmarshalProtoFixed", []byte(unmarshalProtoFixed)), tf)
 	case TypeInt32, TypeInt64, TypeUint32, TypeUint64, TypeEnum:
-		return template.Execute(template.Parse("unmarshalProtoVarint", []byte(unmarshalProtoVarint)), tf)
+		return tmplutil.Execute(tmplutil.Parse("unmarshalProtoVarint", []byte(unmarshalProtoVarint)), tf)
 	case TypeBool:
-		return template.Execute(template.Parse("unmarshalProtoBool", []byte(unmarshalProtoBool)), tf)
+		return tmplutil.Execute(tmplutil.Parse("unmarshalProtoBool", []byte(unmarshalProtoBool)), tf)
 	case TypeString:
-		return template.Execute(template.Parse("unmarshalProtoString", []byte(unmarshalProtoString)), tf)
+		return tmplutil.Execute(tmplutil.Parse("unmarshalProtoString", []byte(unmarshalProtoString)), tf)
 	case TypeBytes:
-		return template.Execute(template.Parse("unmarshalProtoBytes", []byte(unmarshalProtoBytes)), tf)
+		return tmplutil.Execute(tmplutil.Parse("unmarshalProtoBytes", []byte(unmarshalProtoBytes)), tf)
 	case TypeMessage:
-		return template.Execute(template.Parse("unmarshalProtoMessage", []byte(unmarshalProtoMessage)), tf)
+		return tmplutil.Execute(tmplutil.Parse("unmarshalProtoMessage", []byte(unmarshalProtoMessage)), tf)
 	case TypeSInt32, TypeSInt64:
-		return template.Execute(template.Parse("unmarshalProtoSignedVarint", []byte(unmarshalProtoSignedVarint)), tf)
+		return tmplutil.Execute(tmplutil.Parse("unmarshalProtoSignedVarint", []byte(unmarshalProtoSignedVarint)), tf)
 	}
 	panic(fmt.Sprintf("unhandled case %T", pf.Type))
 }

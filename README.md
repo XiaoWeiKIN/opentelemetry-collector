@@ -172,6 +172,7 @@ For more information about the maintainer role, see the [community repository](h
 
 ### Approvers
 
+- [Andrew Wilkins](https://github.com/axw), Elastic
 - [Antoine Toulme](https://github.com/atoulme), Splunk
 - [Damien Mathieu](https://github.com/dmathieu), Elastic
 - [Evan Bradley](https://github.com/evan-bradley), Dynatrace
@@ -187,8 +188,8 @@ the role of the [release manager](./docs/release.md#release-manager).
 
 ### Triagers
 
-- [Andrew Wilkins](https://github.com/axw), Elastic
 - [Andrzej Stencel](https://github.com/andrzej-stencel), Elastic
+- [Arthur Silva Sens](https://github.com/ArthurSens), Grafana Labs
 - [Chao Weng](https://github.com/sincejune), AppDynamics
 - [Vihas Makwana](https://github.com/VihasMakwana), Elastic
 - Actively seeking contributors to triage issues

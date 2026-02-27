@@ -40,7 +40,9 @@ The metric will be removed soon.
 
 | Unit | Metric Type | Value Type | Aggregation Temporality | Monotonic | Stability |
 | ---- | ----------- | ---------- | ----------------------- | --------- | --------- |
-| s | Sum | Double | Delta | false | Deprecated |
+| s | Sum | Double | Delta | false | Deprecated since 1.0.0 |
+
+**Deprecation note**: This metric will be removed
 
 ### metric.input_type
 
@@ -60,6 +62,31 @@ Monotonic cumulative sum int metric with string input_type enabled by default.
 | slice_attr | Attribute with a slice value. | Any Slice | Recommended |
 | map_attr | Attribute with a map value. | Any Map | Recommended |
 
+### reaggregate.metric
+
+Metric for testing spatial reaggregation
+
+| Unit | Metric Type | Value Type | Stability |
+| ---- | ----------- | ---------- | --------- |
+| 1 | Gauge | Double | Beta |
+
+#### Attributes
+
+| Name | Description | Values | Requirement Level |
+| ---- | ----------- | ------ | -------- |
+| string_attr | Attribute with any string value. | Any Str | Recommended |
+| boolean_attr | Attribute with a boolean value. | Any Bool | Recommended |
+
+### system.cpu.time
+
+Monotonic cumulative sum int metric enabled by default.
+
+The metric will be become optional soon.
+
+| Unit | Metric Type | Value Type | Aggregation Temporality | Monotonic | Stability | Semantic Convention |
+| ---- | ----------- | ---------- | ----------------------- | --------- | --------- | ------------------- |
+| s | Sum | Int | Cumulative | true | Beta | [system.cpu.time](https://github.com/open-telemetry/semantic-conventions/blob/v1.38.0/docs/system/system-metrics.md#metric-systemcputime) |
+
 ## Optional Metrics
 
 The following metrics are not emitted by default. Each of them can be enabled by applying the following configuration:
@@ -76,7 +103,9 @@ metrics:
 
 | Unit | Metric Type | Value Type | Stability |
 | ---- | ----------- | ---------- | --------- |
-| 1 | Gauge | Double | Deprecated |
+| 1 | Gauge | Double | Deprecated since 1.0.0 |
+
+**Deprecation note**: This metric will be removed
 
 #### Attributes
 
@@ -92,7 +121,9 @@ metrics:
 
 | Unit | Metric Type | Value Type | Stability |
 | ---- | ----------- | ---------- | --------- |
-|  | Gauge | Double | Deprecated |
+|  | Gauge | Double | Deprecated since 1.0.0 |
+
+**Deprecation note**: This metric will be removed
 
 #### Attributes
 

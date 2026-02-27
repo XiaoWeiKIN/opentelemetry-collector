@@ -4,14 +4,12 @@
 package proto // import "go.opentelemetry.io/collector/internal/cmd/pdatagen/internal/proto"
 
 import (
-	"go.opentelemetry.io/collector/internal/cmd/pdatagen/internal/template"
+	"go.opentelemetry.io/collector/internal/cmd/pdatagen/internal/tmplutil"
 )
 
 const copyOther = `{{ if .repeated -}}
 	dest.{{ .fieldName }} = append(dest.{{ .fieldName }}[:0], src.{{ .fieldName }}...)
-{{- else if not .nullable -}}
-	dest.{{ .fieldName }} = src.{{ .fieldName }}
-{{ else -}}
+{{ else if ne .oneOfGroup "" -}}
 	var ov *{{ .oneOfMessageName }}
 	if !UseProtoPooling.IsEnabled() {
 		ov = &{{ .oneOfMessageName }}{}
@@ -20,6 +18,14 @@ const copyOther = `{{ if .repeated -}}
 	}
 	ov.{{ .fieldName }} = t.{{ .fieldName }}
 	dest.{{ .oneOfGroup }} = ov
+{{ else if .nullable -}}
+	if src.Has{{ .fieldName }}() {
+		dest.Set{{ .fieldName }}(src.{{ .fieldName }})
+	} else {
+		dest.Remove{{ .fieldName }}()
+	}
+{{ else -}}
+	dest.{{ .fieldName }} = src.{{ .fieldName }}
 {{- end }}`
 
 const copyMessage = `{{ if .repeated -}}
@@ -44,7 +50,7 @@ const copyMessage = `{{ if .repeated -}}
 func (pf *Field) GenCopy() string {
 	tf := pf.getTemplateFields()
 	if pf.Type == TypeMessage {
-		return template.Execute(template.Parse("copyMessage", []byte(copyMessage)), tf)
+		return tmplutil.Execute(tmplutil.Parse("copyMessage", []byte(copyMessage)), tf)
 	}
-	return template.Execute(template.Parse("copyOther", []byte(copyOther)), tf)
+	return tmplutil.Execute(tmplutil.Parse("copyOther", []byte(copyOther)), tf)
 }
