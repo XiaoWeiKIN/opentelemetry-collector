@@ -10,5 +10,9 @@ status:
   class: exporter
   stability:
     beta: [traces, metrics, logs]
-    development: [profiles]
+    alpha: [profiles]
   distributions: [core, contrib, k8s]
+
+sending_queue:
+  support: omitted
+  rationale: No-op drops telemetry.

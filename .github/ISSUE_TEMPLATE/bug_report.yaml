@@ -1,6 +1,6 @@
 name: Bug report
 description: Create a report to help us improve
-labels: ["bug"]
+labels: ["bug", "needs triage"]
 body:
   - type: markdown
     attributes:
@@ -66,6 +66,7 @@ body:
       - processor/batch
       - processor/memorylimiter
       - processor/processorhelper
+      - processor/queue_batch
       - processor/x
       - receiver/nop
       - receiver/otlp

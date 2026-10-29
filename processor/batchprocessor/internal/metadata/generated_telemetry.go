@@ -92,7 +92,7 @@ func NewTelemetryBuilder(settings component.TelemetrySettings, options ...Teleme
 	builder.ProcessorBatchBatchSendSize, err = builder.meter.Int64Histogram(
 		"otelcol_processor_batch_batch_send_size",
 		metric.WithDescription("Number of units in the batch [Development]"),
-		metric.WithUnit("{units}"),
+		metric.WithUnit("{unit}"),
 		metric.WithExplicitBucketBoundaries([]float64{10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000, 100000}...),
 	)
 	errs = errors.Join(errs, err)
@@ -100,25 +100,25 @@ func NewTelemetryBuilder(settings component.TelemetrySettings, options ...Teleme
 		"otelcol_processor_batch_batch_send_size_bytes",
 		metric.WithDescription("Number of bytes in batch that was sent. Only available on detailed level. [Development]"),
 		metric.WithUnit("By"),
-		metric.WithExplicitBucketBoundaries([]float64{10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000, 100000, 200000, 300000, 400000, 500000, 600000, 700000, 800000, 900000, 1e+06, 2e+06, 3e+06, 4e+06, 5e+06, 6e+06, 7e+06, 8e+06, 9e+06}...),
+		metric.WithExplicitBucketBoundaries([]float64{128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1.048576e+06, 2.097152e+06, 4.194304e+06, 8.388608e+06, 1.6777216e+07}...),
 	)
 	errs = errors.Join(errs, err)
 	builder.ProcessorBatchBatchSizeTriggerSend, err = builder.meter.Int64Counter(
 		"otelcol_processor_batch_batch_size_trigger_send",
 		metric.WithDescription("Number of times the batch was sent due to a size trigger [Development]"),
-		metric.WithUnit("{times}"),
+		metric.WithUnit("{time}"),
 	)
 	errs = errors.Join(errs, err)
 	builder.ProcessorBatchMetadataCardinality, err = builder.meter.Int64ObservableUpDownCounter(
 		"otelcol_processor_batch_metadata_cardinality",
 		metric.WithDescription("Number of distinct metadata value combinations being processed [Development]"),
-		metric.WithUnit("{combinations}"),
+		metric.WithUnit("{combination}"),
 	)
 	errs = errors.Join(errs, err)
 	builder.ProcessorBatchTimeoutTriggerSend, err = builder.meter.Int64Counter(
 		"otelcol_processor_batch_timeout_trigger_send",
 		metric.WithDescription("Number of times the batch was sent due to a timeout trigger [Development]"),
-		metric.WithUnit("{times}"),
+		metric.WithUnit("{time}"),
 	)
 	errs = errors.Join(errs, err)
 	return &builder, errs

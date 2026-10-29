@@ -324,14 +324,12 @@ func (mb *multiShardBatcher[T]) consume(ctx context.Context, data T) error {
 	// Get each metadata key value, form the corresponding
 	// attribute set for use as a map lookup key.
 	info := client.FromContext(ctx)
-	md := map[string][]string{}
-	var attrs []attribute.KeyValue
+	attrs := make([]attribute.KeyValue, 0, len(mb.metadataKeys))
 	for _, k := range mb.metadataKeys {
 		// Lookup the value in the incoming metadata, copy it
 		// into the outgoing metadata, and create a unique
 		// value for the attributeSet.
 		vs := info.Metadata.Get(k)
-		md[k] = vs
 		if len(vs) == 1 {
 			attrs = append(attrs, attribute.String(k, vs[0]))
 		} else {
@@ -351,6 +349,10 @@ func (mb *multiShardBatcher[T]) consume(ctx context.Context, data T) error {
 		// aset.ToSlice() returns the sorted, deduplicated,
 		// and name-lowercased list of attributes.
 		var loaded bool
+		md := make(map[string][]string, len(mb.metadataKeys))
+		for _, k := range mb.metadataKeys {
+			md[k] = info.Metadata.Get(k)
+		}
 		b, loaded = mb.batchers.LoadOrStore(aset, mb.processor.newShard(md))
 		if !loaded {
 			// Start the goroutine only if we added the object to the map, otherwise is already started.
@@ -460,7 +462,7 @@ func (bt *batchTraces) split(sendBatchMaxSize int) (int, ptrace.Traces) {
 	var td ptrace.Traces
 	var sent int
 	if sendBatchMaxSize > 0 && bt.itemCount() > sendBatchMaxSize {
-		td = splitTraces(sendBatchMaxSize, bt.traceData)
+		td = splitTraces(sendBatchMaxSize, bt.traceData, bt.spanCount)
 		bt.spanCount -= sendBatchMaxSize
 		sent = sendBatchMaxSize
 	} else {
@@ -499,7 +501,7 @@ func (bm *batchMetrics) split(sendBatchMaxSize int) (int, pmetric.Metrics) {
 	var md pmetric.Metrics
 	var sent int
 	if sendBatchMaxSize > 0 && bm.dataPointCount > sendBatchMaxSize {
-		md = splitMetrics(sendBatchMaxSize, bm.metricData)
+		md = splitMetrics(sendBatchMaxSize, bm.metricData, bm.dataPointCount)
 		bm.dataPointCount -= sendBatchMaxSize
 		sent = sendBatchMaxSize
 	} else {
@@ -550,7 +552,7 @@ func (bl *batchLogs) split(sendBatchMaxSize int) (int, plog.Logs) {
 	var sent int
 
 	if sendBatchMaxSize > 0 && bl.logCount > sendBatchMaxSize {
-		ld = splitLogs(sendBatchMaxSize, bl.logData)
+		ld = splitLogs(sendBatchMaxSize, bl.logData, bl.logCount)
 		bl.logCount -= sendBatchMaxSize
 		sent = sendBatchMaxSize
 	} else {

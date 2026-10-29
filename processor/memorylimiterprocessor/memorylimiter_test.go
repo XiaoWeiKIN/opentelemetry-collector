@@ -89,11 +89,16 @@ func TestNoDataLoss(t *testing.T) {
 	// This will result in queuing of produced data inside the exporter and memory usage
 	// will increase.
 
+	timeout := 5 * time.Second
+	if runtime.GOOS == "windows" {
+		timeout = 20 * time.Second // windows is slower to run through this test, giving it more time
+	}
+
 	// We must eventually hit the memory limit and the receiver must see an error from memory limiter.
 	require.Eventually(t, func() bool {
 		// Did last ConsumeLogs call return an error?
 		return receiver.LastConsumeResult() != nil
-	}, 5*time.Second, 1*time.Millisecond)
+	}, timeout, 1*time.Millisecond)
 
 	// We are now memory limited and receiver can't produce data anymore.
 
@@ -105,14 +110,14 @@ func TestNoDataLoss(t *testing.T) {
 	// Eventually we must see that receiver's ConsumeLog call returns success again.
 	require.Eventually(t, func() bool {
 		return receiver.LastConsumeResult() == nil
-	}, 5*time.Second, 1*time.Millisecond)
+	}, timeout, 1*time.Millisecond)
 
 	// And eventually the exporter must confirm that it delivered exact number of produced logs.
 	require.Eventually(t, func() bool {
 		d := exporter.DeliveredLogCount()
 		t.Logf("received: %d, expected: %d\n", d, receiver.ProduceCount)
 		return receiver.ProduceCount == d
-	}, 5*time.Second, 100*time.Millisecond)
+	}, timeout, 100*time.Millisecond)
 
 	// Double check that the number of logs accepted by exporter matches the number of produced by receiver.
 	assert.Equal(t, receiver.ProduceCount, exporter.AcceptedLogCount())
@@ -191,7 +196,8 @@ func TestMetricsMemoryPressureResponse(t *testing.T) {
 				ml.processMetrics,
 				processorhelper.WithCapabilities(processorCapabilities),
 				processorhelper.WithStart(ml.start),
-				processorhelper.WithShutdown(ml.shutdown))
+				processorhelper.WithShutdown(ml.shutdown),
+			)
 			require.NoError(t, err)
 
 			assert.NoError(t, mp.Start(ctx, &host{}))
@@ -229,7 +235,7 @@ func TestMetricsTelemetry(t *testing.T) {
 	}
 	require.NoError(t, metrics.Shutdown(context.Background()))
 
-	metadatatest.AssertEqualProcessorAcceptedMetricPoints(t, tel,
+	metadatatest.AssertEqualProcessorMemoryLimiterAcceptedMetricPoints(t, tel,
 		[]metricdata.DataPoint[int64]{
 			{
 				Value:      10,
@@ -310,7 +316,8 @@ func TestTraceMemoryPressureResponse(t *testing.T) {
 				ml.processTraces,
 				processorhelper.WithCapabilities(processorCapabilities),
 				processorhelper.WithStart(ml.start),
-				processorhelper.WithShutdown(ml.shutdown))
+				processorhelper.WithShutdown(ml.shutdown),
+			)
 			require.NoError(t, err)
 
 			assert.NoError(t, tp.Start(ctx, &host{}))
@@ -400,7 +407,8 @@ func TestLogMemoryPressureResponse(t *testing.T) {
 				ml.processLogs,
 				processorhelper.WithCapabilities(processorCapabilities),
 				processorhelper.WithStart(ml.start),
-				processorhelper.WithShutdown(ml.shutdown))
+				processorhelper.WithShutdown(ml.shutdown),
+			)
 			require.NoError(t, err)
 
 			assert.NoError(t, tp.Start(ctx, &host{}))
@@ -490,7 +498,8 @@ func TestProfileMemoryPressureResponse(t *testing.T) {
 				ml.processProfiles,
 				xprocessorhelper.WithCapabilities(processorCapabilities),
 				xprocessorhelper.WithStart(ml.start),
-				xprocessorhelper.WithShutdown(ml.shutdown))
+				xprocessorhelper.WithShutdown(ml.shutdown),
+			)
 			require.NoError(t, err)
 
 			assert.NoError(t, tp.Start(ctx, &host{}))

@@ -1,5 +1,6 @@
 name: Other issue
 description: Create a new issue to help us improve the collector
+labels: ["needs triage"]
 body:
   - type: dropdown
     id: component
@@ -59,6 +60,7 @@ body:
       - processor/batch
       - processor/memorylimiter
       - processor/processorhelper
+      - processor/queue_batch
       - processor/x
       - receiver/nop
       - receiver/otlp

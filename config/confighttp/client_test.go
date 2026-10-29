@@ -27,11 +27,12 @@ import (
 	"go.opentelemetry.io/collector/config/configopaque"
 	"go.opentelemetry.io/collector/config/configoptional"
 	"go.opentelemetry.io/collector/config/configtls"
+	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/confmap/confmaptest"
-	"go.opentelemetry.io/collector/confmap/xconfmap"
 	"go.opentelemetry.io/collector/extension"
 	"go.opentelemetry.io/collector/extension/extensionauth"
 	"go.opentelemetry.io/collector/extension/extensionauth/extensionauthtest"
+	"go.opentelemetry.io/collector/featuregate"
 )
 
 var (
@@ -232,6 +233,17 @@ func TestPartialHTTPClientSettings(t *testing.T) {
 }
 
 func TestDefaultHTTPClientSettings(t *testing.T) {
+	httpClientSettings := NewDefaultClientConfig()
+	assert.Equal(t, 0, httpClientSettings.MaxIdleConns)
+	assert.Equal(t, 0*time.Second, httpClientSettings.IdleConnTimeout)
+	assert.Equal(t, configoptional.Some(NewDefaultKeepaliveClientConfig()), httpClientSettings.Keepalive)
+}
+
+func TestDefaultHTTPClientSettingsDeprecated(t *testing.T) {
+	require.NoError(t, featuregate.GlobalRegistry().Set("pkg.confighttp.PrioritizeNewKeepalive", false))
+	t.Cleanup(func() {
+		require.NoError(t, featuregate.GlobalRegistry().Set("pkg.confighttp.PrioritizeNewKeepalive", true))
+	})
 	httpClientSettings := NewDefaultClientConfig()
 	assert.Equal(t, 100, httpClientSettings.MaxIdleConns)
 	assert.Equal(t, 90*time.Second, httpClientSettings.IdleConnTimeout)
@@ -485,7 +497,7 @@ func TestHTTPClientSettingWithAuthConfig(t *testing.T) {
 	}
 }
 
-func TestHttpClientHeaders(t *testing.T) {
+func TestHTTPClientHeaders(t *testing.T) {
 	tests := []struct {
 		name    string
 		headers configopaque.MapList
@@ -524,7 +536,7 @@ func TestHttpClientHeaders(t *testing.T) {
 	}
 }
 
-func TestHttpClientHostHeader(t *testing.T) {
+func TestHTTPClientHostHeader(t *testing.T) {
 	hostHeader := "th"
 	tt := struct {
 		name    string
@@ -559,7 +571,48 @@ func TestHttpClientHostHeader(t *testing.T) {
 	})
 }
 
-func TestHttpTransportOptions(t *testing.T) {
+func TestHTTPTransportOptions(t *testing.T) {
+	settings := componenttest.NewNopTelemetrySettings()
+	// Disable OTel instrumentation so the *http.Transport object is directly accessible
+	settings.MeterProvider = nil
+	settings.TracerProvider = nil
+
+	clientConfig := NewDefaultClientConfig()
+	clientConfig.Keepalive = configoptional.Some(NewDefaultKeepaliveClientConfig())
+	clientConfig.Keepalive.Get().MaxIdleConns = 100
+	clientConfig.Keepalive.Get().IdleConnTimeout = time.Duration(100)
+	clientConfig.Keepalive.Get().MaxIdleConnsPerHost = 100
+	clientConfig.MaxConnsPerHost = 100
+	client, err := clientConfig.ToClient(context.Background(), nil, settings)
+	require.NoError(t, err)
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok, "client.Transport is not an *http.Transport")
+	require.Equal(t, 100, transport.MaxIdleConns)
+	require.Equal(t, time.Duration(100), transport.IdleConnTimeout)
+	require.Equal(t, 100, transport.MaxConnsPerHost)
+	require.Equal(t, 100, transport.MaxIdleConnsPerHost)
+
+	clientConfig = NewDefaultClientConfig()
+	clientConfig.Keepalive = configoptional.Some(NewDefaultKeepaliveClientConfig())
+	clientConfig.Keepalive.Get().MaxIdleConns = 0
+	clientConfig.Keepalive.Get().IdleConnTimeout = time.Duration(0)
+	clientConfig.Keepalive.Get().MaxIdleConnsPerHost = 0
+	clientConfig.MaxConnsPerHost = 0
+	client, err = clientConfig.ToClient(context.Background(), nil, settings)
+	require.NoError(t, err)
+	transport, ok = client.Transport.(*http.Transport)
+	require.True(t, ok, "client.Transport is not an *http.Transport")
+	require.Equal(t, 0, transport.MaxIdleConns)
+	require.Equal(t, time.Duration(0), transport.IdleConnTimeout)
+	require.Equal(t, 0, transport.MaxConnsPerHost)
+	require.Equal(t, 0, transport.MaxIdleConnsPerHost)
+}
+
+func TestHTTPTransportOptionsDeprecated(t *testing.T) {
+	require.NoError(t, featuregate.GlobalRegistry().Set("pkg.confighttp.PrioritizeNewKeepalive", false))
+	t.Cleanup(func() {
+		require.NoError(t, featuregate.GlobalRegistry().Set("pkg.confighttp.PrioritizeNewKeepalive", true))
+	})
 	settings := componenttest.NewNopTelemetrySettings()
 	// Disable OTel instrumentation so the *http.Transport object is directly accessible
 	settings.MeterProvider = nil
@@ -668,7 +721,7 @@ func TestClientUnmarshalYAMLWithMiddlewares(t *testing.T) {
 	require.NoError(t, clientSub.Unmarshal(&clientConfig))
 
 	// Validate the client configuration using reflection-based validation
-	require.NoError(t, xconfmap.Validate(&clientConfig), "Client configuration should be valid")
+	require.NoError(t, confmap.Validate(&clientConfig), "Client configuration should be valid")
 
 	assert.Equal(t, "http://localhost:4318/v1/traces", clientConfig.Endpoint)
 	require.Len(t, clientConfig.Middlewares, 2)
@@ -689,7 +742,7 @@ func TestClientUnmarshalYAMLComprehensiveConfig(t *testing.T) {
 	require.NoError(t, clientSub.Unmarshal(&clientConfig))
 
 	// Validate the client configuration using reflection-based validation
-	require.NoError(t, xconfmap.Validate(&clientConfig), "Client configuration should be valid")
+	require.NoError(t, confmap.Validate(&clientConfig), "Client configuration should be valid")
 
 	// Verify basic fields
 	assert.Equal(t, "http://example.com:4318/v1/traces", clientConfig.Endpoint)

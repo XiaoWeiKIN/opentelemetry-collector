@@ -10,6 +10,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata/metricdatatest"
+	"go.opentelemetry.io/otel/trace/noop"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 
@@ -17,6 +21,7 @@ import (
 	"go.opentelemetry.io/collector/component/componenttest"
 	"go.opentelemetry.io/collector/config/configoptional"
 	"go.opentelemetry.io/collector/config/configretry"
+	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/metadatatest"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/request"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/requesttest"
@@ -33,15 +38,39 @@ func TestBaseExporter(t *testing.T) {
 
 func TestBaseExporterWithOptions(t *testing.T) {
 	want := errors.New("my error")
+	tracer := noop.NewTracerProvider().Tracer("test")
+
 	be, err := NewBaseExporter(
 		exportertest.NewNopSettings(exportertest.NopType), pipeline.SignalMetrics, noopExport,
 		WithStart(func(context.Context, component.Host) error { return want }),
 		WithShutdown(func(context.Context) error { return want }),
 		WithTimeout(NewDefaultTimeoutConfig()),
+		WithTracer(tracer),
 	)
 	require.NoError(t, err)
+	require.Equal(t, tracer, be.tracer)
 	require.Equal(t, want, be.Start(context.Background(), componenttest.NewNopHost()))
 	require.Equal(t, want, be.Shutdown(context.Background()))
+}
+
+func TestBaseExporterWithTracer(t *testing.T) {
+	telemetry := componenttest.NewTelemetry()
+	t.Cleanup(func() {
+		require.NoError(t, telemetry.Shutdown(context.Background()))
+	})
+
+	telemetrySettings := telemetry.NewTelemetrySettings()
+	tracer := telemetrySettings.TracerProvider.Tracer("test-tracer")
+
+	be, err := NewBaseExporter(
+		exportertest.NewNopSettings(exportertest.NopType),
+		pipeline.SignalMetrics,
+		noopExport,
+		WithTracer(tracer),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, be)
+	require.Same(t, tracer, be.tracer)
 }
 
 func TestQueueOptionsWithRequestExporter(t *testing.T) {
@@ -87,6 +116,42 @@ func TestBaseExporterLogging(t *testing.T) {
 	assert.Contains(t, errorLogs[1].Message, "Exporting failed. Rejecting data.")
 	assert.Equal(t, "my error", errorLogs[1].ContextMap()["error"])
 	require.NoError(t, bs.Shutdown(context.Background()))
+}
+
+func TestBaseExporterExtraAttrs(t *testing.T) {
+	set := exportertest.NewNopSettings(exportertest.NopType)
+	tt := componenttest.NewTelemetry()
+	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
+	set.MeterProvider = tt.NewTelemetrySettings().MeterProvider
+
+	rCfg := configretry.NewDefaultBackOffConfig()
+	rCfg.Enabled = false
+	qCfg := NewDefaultQueueConfig()
+	qCfg.WaitForResult = true
+
+	bs, err := NewBaseExporter(set, pipeline.SignalMetrics, errExport,
+		WithQueueBatchSettings(newFakeQueueBatch()),
+		WithQueue(configoptional.Some(qCfg)),
+		WithRetry(rCfg),
+		WithAttributes(attribute.String("test", "value"), attribute.Bool("other", true)),
+	)
+	require.NoError(t, err)
+	require.NoError(t, bs.Start(context.Background(), componenttest.NewNopHost()))
+	t.Cleanup(func() {
+		require.NoError(t, bs.Shutdown(context.Background()))
+	})
+	sendErr := bs.Send(context.Background(), &requesttest.FakeRequest{Items: 2})
+	require.Error(t, sendErr)
+	metadatatest.AssertEqualExporterSentMetricPoints(t, tt, []metricdata.DataPoint[int64]{
+		{
+			Attributes: attribute.NewSet(
+				attribute.String("exporter", set.ID.String()),
+				attribute.String("test", "value"),
+				attribute.Bool("other", true),
+			),
+			Value: int64(0),
+		},
+	}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
 }
 
 func TestWithQueue_MetadataKeys(t *testing.T) {

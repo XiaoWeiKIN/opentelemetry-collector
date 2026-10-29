@@ -2,12 +2,12 @@
 # OTLP HTTP Exporter
 | Status        |           |
 | ------------- |-----------|
-| Stability     | [development]: profiles   |
+| Stability     | [alpha]: profiles   |
 |               | [stable]: traces, metrics, logs   |
 | Distributions | [core], [contrib], [k8s], [otlp] |
 | Issues        | [![Open issues](https://img.shields.io/github/issues-search/open-telemetry/opentelemetry-collector?query=is%3Aissue%20is%3Aopen%20label%3Aexporter%2Fotlphttp%20&label=open&color=orange&logo=opentelemetry)](https://github.com/open-telemetry/opentelemetry-collector/issues?q=is%3Aopen+is%3Aissue+label%3Aexporter%2Fotlphttp) [![Closed issues](https://img.shields.io/github/issues-search/open-telemetry/opentelemetry-collector?query=is%3Aissue%20is%3Aclosed%20label%3Aexporter%2Fotlphttp%20&label=closed&color=blue&logo=opentelemetry)](https://github.com/open-telemetry/opentelemetry-collector/issues?q=is%3Aclosed+is%3Aissue+label%3Aexporter%2Fotlphttp) |
 
-[development]: https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/component-stability.md#development
+[alpha]: https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/component-stability.md#alpha
 [stable]: https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/component-stability.md#stable
 [core]: https://github.com/open-telemetry/opentelemetry-collector-releases/tree/main/distributions/otelcol
 [contrib]: https://github.com/open-telemetry/opentelemetry-collector-releases/tree/main/distributions/otelcol-contrib
@@ -27,7 +27,7 @@ The following settings are required:
 - `endpoint` (no default): The target base URL to send data to (e.g.: https://example.com:4318).
   To send each signal a corresponding path will be added to this base URL, i.e. for traces
   "/v1/traces" will appended, for metrics "/v1/metrics" will be appended, for logs
-  "/v1/logs" will be appended. 
+  "/v1/logs" will be appended.
 
 The following settings can be optionally configured:
 
@@ -74,3 +74,14 @@ exporters:
 
 The full list of settings exposed for this exporter are documented [here](./config.go)
 with detailed sample configurations [here](./testdata/config.yaml).
+
+## Profiles Development Version
+
+The Profiles exporter sends exactly one `OTLP-Profiles-Development-Version`
+header for both Protobuf and JSON requests, using
+[`pprofileotlp.DevelopmentVersion`](../../pdata/pprofile/pprofileotlp/version.go)
+to identify its compiled-in schema. Any configured value for this header is
+overridden. The exporter does not forward incoming version metadata or negotiate
+a different version.
+See the [receiver documentation](../../receiver/otlpreceiver/README.md#profiles-development-version)
+for the protocol and compatibility considerations.

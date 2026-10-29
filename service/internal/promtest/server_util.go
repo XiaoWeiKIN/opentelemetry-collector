@@ -36,15 +36,8 @@ func addrToPrometheus(address string) *config.Prometheus {
 	return &config.Prometheus{
 		Host:              &host,
 		Port:              &portInt,
-		WithoutScopeInfo:  ptr(true),
-		WithoutUnits:      ptr(true),
-		WithoutTypeSuffix: ptr(true),
-		WithResourceConstantLabels: &config.IncludeExclude{
-			Included: []string{},
-		},
+		WithoutScopeInfo:  new(true),
+		WithoutUnits:      new(true),
+		WithoutTypeSuffix: new(true),
 	}
-}
-
-func ptr[T any](v T) *T {
-	return &v
 }

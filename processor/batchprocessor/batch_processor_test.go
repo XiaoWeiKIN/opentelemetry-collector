@@ -23,10 +23,13 @@ import (
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/consumer/consumererror"
 	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/internal/testutil"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 	"go.opentelemetry.io/collector/pdata/ptrace"
 	"go.opentelemetry.io/collector/pdata/testdata"
+	"go.opentelemetry.io/collector/pdata/xpdata/pref"
 	"go.opentelemetry.io/collector/processor/batchprocessor/internal/metadata"
 	"go.opentelemetry.io/collector/processor/batchprocessor/internal/metadatatest"
 	"go.opentelemetry.io/collector/processor/processortest"
@@ -210,14 +213,10 @@ func TestBatchProcessorSentBySize(t *testing.T) {
 	metadatatest.AssertEqualProcessorBatchBatchSendSizeBytes(t, tel,
 		[]metricdata.HistogramDataPoint[int64]{
 			{
-				Attributes: attribute.NewSet(attribute.String("processor", "batch")),
-				Count:      uint64(expectedBatchesNum),
-				Bounds: []float64{
-					10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000,
-					100_000, 200_000, 300_000, 400_000, 500_000, 600_000, 700_000, 800_000, 900_000,
-					1000_000, 2000_000, 3000_000, 4000_000, 5000_000, 6000_000, 7000_000, 8000_000, 9000_000,
-				},
-				BucketCounts: []uint64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, uint64(expectedBatchesNum), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+				Attributes:   attribute.NewSet(attribute.String("processor", "batch")),
+				Count:        uint64(expectedBatchesNum),
+				Bounds:       []float64{128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216},
+				BucketCounts: []uint64{0, 0, 0, 0, 0, uint64(expectedBatchesNum), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 				Sum:          int64(sizeSum),
 				Min:          metricdata.NewExtrema(int64(sizeSum / expectedBatchesNum)),
 				Max:          metricdata.NewExtrema(int64(sizeSum / expectedBatchesNum)),
@@ -309,14 +308,10 @@ func TestBatchProcessorSentBySizeWithMaxSize(t *testing.T) {
 	metadatatest.AssertEqualProcessorBatchBatchSendSizeBytes(t, tel,
 		[]metricdata.HistogramDataPoint[int64]{
 			{
-				Attributes: attribute.NewSet(attribute.String("processor", "batch")),
-				Count:      uint64(expectedBatchesNum),
-				Bounds: []float64{
-					10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000,
-					100_000, 200_000, 300_000, 400_000, 500_000, 600_000, 700_000, 800_000, 900_000,
-					1000_000, 2000_000, 3000_000, 4000_000, 5000_000, 6000_000, 7000_000, 8000_000, 9000_000,
-				},
-				BucketCounts: []uint64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, uint64(expectedBatchesNum - 1), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+				Attributes:   attribute.NewSet(attribute.String("processor", "batch")),
+				Count:        uint64(expectedBatchesNum),
+				Bounds:       []float64{128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216},
+				BucketCounts: []uint64{0, 0, 0, 0, 0, 1, uint64(expectedBatchesNum - 1), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 				Sum:          int64(sizeSum),
 				Min:          metricdata.NewExtrema(int64(minSize)),
 				Max:          metricdata.NewExtrema(int64(maxSize)),
@@ -523,14 +518,10 @@ func TestBatchMetricProcessorBatchSize(t *testing.T) {
 	metadatatest.AssertEqualProcessorBatchBatchSendSizeBytes(t, tel,
 		[]metricdata.HistogramDataPoint[int64]{
 			{
-				Attributes: attribute.NewSet(attribute.String("processor", "batch")),
-				Count:      uint64(expectedBatchesNum),
-				Bounds: []float64{
-					10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000,
-					100_000, 200_000, 300_000, 400_000, 500_000, 600_000, 700_000, 800_000, 900_000,
-					1000_000, 2000_000, 3000_000, 4000_000, 5000_000, 6000_000, 7000_000, 8000_000, 9000_000,
-				},
-				BucketCounts: []uint64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, uint64(expectedBatchesNum), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+				Attributes:   attribute.NewSet(attribute.String("processor", "batch")),
+				Count:        uint64(expectedBatchesNum),
+				Bounds:       []float64{128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216},
+				BucketCounts: []uint64{0, 0, 0, 0, 0, 0, uint64(expectedBatchesNum), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 				Sum:          int64(size),
 				Min:          metricdata.NewExtrema(int64(size / int(expectedBatchesNum))),
 				Max:          metricdata.NewExtrema(int64(size / int(expectedBatchesNum))),
@@ -705,7 +696,7 @@ func BenchmarkTraceSizeBytes(b *testing.B) {
 	sizer := &ptrace.ProtoMarshaler{}
 	td := testdata.GenerateTraces(8192)
 	for b.Loop() {
-		fmt.Println(sizer.TracesSize(td))
+		sizer.TracesSize(td)
 	}
 }
 
@@ -716,42 +707,131 @@ func BenchmarkTraceSizeSpanCount(b *testing.B) {
 	}
 }
 
-func BenchmarkBatchMetricProcessor2k(b *testing.B) {
-	b.StopTimer()
-	cfg := &Config{
-		Timeout:       100 * time.Millisecond,
-		SendBatchSize: 2000,
-	}
-	runMetricsProcessorBenchmark(b, cfg)
-}
+func BenchmarkBatchMetricSplitMaxSize2k(b *testing.B) {
+	testutil.SkipGCHeavyBench(b)
+	const (
+		splitSize         = 2000
+		metricsPerRequest = 50_000
+	)
 
-func BenchmarkMultiBatchMetricProcessor2k(b *testing.B) {
-	b.StopTimer()
-	cfg := &Config{
-		Timeout:       100 * time.Millisecond,
-		SendBatchSize: 2000,
-		MetadataKeys:  []string{"test", "test2"},
-	}
-	runMetricsProcessorBenchmark(b, cfg)
-}
+	template := testdata.GenerateMetrics(metricsPerRequest)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		b.StopTimer()
+		md := pmetric.NewMetrics()
+		template.CopyTo(md)
+		batch := newMetricsBatch(nil)
+		batch.add(md)
+		b.StartTimer()
 
-func runMetricsProcessorBenchmark(b *testing.B, cfg *Config) {
-	ctx := context.Background()
-	sink := new(metricsSink)
-	metrics, err := NewFactory().CreateMetrics(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, sink)
-	require.NoError(b, err)
-	require.NoError(b, metrics.Start(ctx, componenttest.NewNopHost()))
-
-	const metricsPerRequest = 150_000
-	b.StartTimer()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			require.NoError(b, metrics.ConsumeMetrics(ctx, testdata.GenerateMetrics(metricsPerRequest)))
+		for batch.itemCount() >= splitSize {
+			_, req := batch.split(splitSize)
+			pref.UnrefMetrics(req)
 		}
-	})
-	b.StopTimer()
-	require.NoError(b, metrics.Shutdown(ctx))
-	require.Equal(b, b.N*metricsPerRequest, sink.metricsCount)
+	}
+}
+
+// generateFanoutTraces builds traces with a high resource and scope fan-out.
+// testdata.GenerateTraces produces a single resource and scope, which makes
+// per-resource span counting nearly free and hides that cost entirely.
+func generateFanoutTraces(resourceCount, scopePerResource, spansPerScope int) ptrace.Traces {
+	td := ptrace.NewTraces()
+	for r := range resourceCount {
+		rs := td.ResourceSpans().AppendEmpty()
+		rs.Resource().Attributes().PutStr("service.name", "service-"+strconv.Itoa(r))
+		for s := range scopePerResource {
+			ss := rs.ScopeSpans().AppendEmpty()
+			ss.Scope().SetName("scope-" + strconv.Itoa(s))
+			ss.SetSchemaUrl("https://opentelemetry.io/schemas/1.21.0")
+			spans := ss.Spans()
+			spans.EnsureCapacity(spansPerScope)
+			for i := range spansPerScope {
+				span := spans.AppendEmpty()
+				span.SetName("operation")
+				span.SetTraceID(pcommon.TraceID([16]byte{byte(r), byte(s), byte(i)}))
+				span.SetSpanID(pcommon.SpanID([8]byte{byte(r), byte(s), byte(i)}))
+			}
+		}
+	}
+	return td
+}
+
+// generateFanoutLogs builds logs with a high resource and scope fan-out, for the
+// same reason as generateFanoutTraces.
+func generateFanoutLogs(resourceCount, scopePerResource, recordsPerScope int) plog.Logs {
+	ld := plog.NewLogs()
+	for r := range resourceCount {
+		rl := ld.ResourceLogs().AppendEmpty()
+		rl.Resource().Attributes().PutStr("service.name", "service-"+strconv.Itoa(r))
+		for s := range scopePerResource {
+			sl := rl.ScopeLogs().AppendEmpty()
+			sl.Scope().SetName("scope-" + strconv.Itoa(s))
+			sl.SetSchemaUrl("https://opentelemetry.io/schemas/1.21.0")
+			records := sl.LogRecords()
+			records.EnsureCapacity(recordsPerScope)
+			for i := range recordsPerScope {
+				record := records.AppendEmpty()
+				record.Body().SetStr("message")
+				record.SetObservedTimestamp(pcommon.NewTimestampFromTime(time.Unix(int64(r), int64(s+i))))
+			}
+		}
+	}
+	return ld
+}
+
+func BenchmarkBatchTraceSplitMaxSize2k(b *testing.B) {
+	testutil.SkipGCHeavyBench(b)
+	const (
+		splitSize        = 2000
+		resourceCount    = 400
+		scopePerResource = 8
+		spansPerScope    = 10
+	)
+
+	template := generateFanoutTraces(resourceCount, scopePerResource, spansPerScope)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		b.StopTimer()
+		td := ptrace.NewTraces()
+		template.CopyTo(td)
+		batch := newBatchTraces(nil)
+		batch.add(td)
+		b.StartTimer()
+
+		for batch.itemCount() >= splitSize {
+			_, req := batch.split(splitSize)
+			pref.UnrefTraces(req)
+		}
+	}
+}
+
+func BenchmarkBatchLogSplitMaxSize2k(b *testing.B) {
+	testutil.SkipGCHeavyBench(b)
+	const (
+		splitSize        = 2000
+		resourceCount    = 400
+		scopePerResource = 8
+		recordsPerScope  = 10
+	)
+
+	template := generateFanoutLogs(resourceCount, scopePerResource, recordsPerScope)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		b.StopTimer()
+		ld := plog.NewLogs()
+		template.CopyTo(ld)
+		batch := newBatchLogs(nil)
+		batch.add(ld)
+		b.StartTimer()
+
+		for batch.itemCount() >= splitSize {
+			_, req := batch.split(splitSize)
+			pref.UnrefLogs(req)
+		}
+	}
 }
 
 type metricsSink struct {
@@ -868,14 +948,10 @@ func TestBatchLogProcessor_BatchSize(t *testing.T) {
 	metadatatest.AssertEqualProcessorBatchBatchSendSizeBytes(t, tel,
 		[]metricdata.HistogramDataPoint[int64]{
 			{
-				Attributes: attribute.NewSet(attribute.String("processor", "batch")),
-				Count:      uint64(expectedBatchesNum),
-				Bounds: []float64{
-					10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000,
-					100_000, 200_000, 300_000, 400_000, 500_000, 600_000, 700_000, 800_000, 900_000,
-					1000_000, 2000_000, 3000_000, 4000_000, 5000_000, 6000_000, 7000_000, 8000_000, 9000_000,
-				},
-				BucketCounts: []uint64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, uint64(expectedBatchesNum), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+				Attributes:   attribute.NewSet(attribute.String("processor", "batch")),
+				Count:        uint64(expectedBatchesNum),
+				Bounds:       []float64{128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216},
+				BucketCounts: []uint64{0, 0, 0, 0, 0, 0, uint64(expectedBatchesNum), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 				Sum:          int64(size),
 				Min:          metricdata.NewExtrema(int64(size / int(expectedBatchesNum))),
 				Max:          metricdata.NewExtrema(int64(size / int(expectedBatchesNum))),

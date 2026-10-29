@@ -12,6 +12,9 @@ ALL_SRC := $(shell find . -name '*.go' \
 ALL_DOC := $(shell find . \( -name "*.md" -o -name "*.yaml" \) \
                                 -type f | sort)
 
+# All Markdown files. Used in markdownlint.
+ALL_MD := $(shell find . -name "*.md" -type f | sort)
+
 # ALL_MODULES includes ./* dirs (excludes . dir)
 ALL_MODULES := $(shell find . -mindepth 2 \
 				-type f \
@@ -37,7 +40,7 @@ endef
 .DEFAULT_GOAL := all
 
 .PHONY: all
-all: checklicense checkdoc misspell goimpi goporto multimod-verify golint gotest
+all: checklicense checkdoc misspell markdownlint goimpi goporto multimod-verify golint gotest
 
 all-modules:
 	@echo $(ALL_MODULES) | tr ' ' '\n' | sort
@@ -134,6 +137,10 @@ checklicense:
 misspell:
 	$(GO_TOOL) misspell -error $(ALL_DOC)
 
+.PHONY: markdownlint
+markdownlint:
+	npx -y markdownlint-cli@0.48.0 -c .markdownlint.yaml --ignore-path .markdownlintignore -- $(ALL_MD)
+
 .PHONY: misspell-correction
 misspell-correction:
 	$(GO_TOOL) misspell -w $(ALL_DOC)
@@ -142,8 +149,7 @@ misspell-correction:
 run: otelcorecol
 	./bin/otelcorecol_$(GOOS)_$(GOARCH) --config ${RUN_CONFIG} ${RUN_ARGS}
 
-# Append root module to all modules
-GOMODULES = $(ALL_MODULES) $(PWD)
+GOMODULES = $(ALL_MODULES)
 
 # Define a delegation target for each module
 .PHONY: $(GOMODULES)
@@ -205,10 +211,11 @@ ALL_MOD_PATHS := "" $(ALL_MODULES:.%=%)
 .PHONY: prepare-contrib
 prepare-contrib:
 	@echo Setting contrib at $(CONTRIB_PATH) to use this core checkout
-	@$(MAKE) -j2 -C $(CONTRIB_PATH) for-all CMD="$(GOCMD) mod edit \
+	@$(MAKE) -j4 -C $(CONTRIB_PATH) for-all CMD="$(GOCMD) mod edit \
 		$(addprefix -replace ,$(join $(ALL_MOD_PATHS:%=go.opentelemetry.io/collector%=),$(ALL_MOD_PATHS:%=$(CURDIR)%)))"
-	@$(MAKE) -j2 -C $(CONTRIB_PATH) gotidy
+	@$(MAKE) -C $(CONTRIB_PATH)/internal/tools tidy
 
+	@$(MAKE) -j4 -C $(CONTRIB_PATH) gotidy
 	@$(MAKE) generate-contrib
 
 # Checks that the HEAD of the contrib repo checked out in CONTRIB_PATH compiles
@@ -225,7 +232,8 @@ check-contrib:
 .PHONY: generate-contrib
 generate-contrib:
 	@echo -e "\nGenerating files in contrib"
-	$(MAKE) -C $(CONTRIB_PATH) generate GROUP=all
+	$(MAKE) -j4 -C $(CONTRIB_PATH) generate GROUP=all GOFLAGS="$(GOFLAGS) -mod=mod"
+	@$(MAKE) -j4 -C $(CONTRIB_PATH) gotidy
 
 # Restores contrib to its original state after running check-contrib.
 .PHONY: restore-contrib
@@ -263,22 +271,31 @@ checkapi:
 checkdoc:
 	$(GO_TOOL) checkfile --project-path $(CURDIR) --component-rel-path $(COMP_REL_PATH) --module-name $(MOD_NAME) --file-name "README.md"
 
+.PHONY: check-stability
+check-stability:
+	cd cmd/mdatagen && $(GOCMD) install .
+	@$(MAKE) for-all-target TARGET="check-stability-mod"
+
+# Extract the relative path of every module listed between "stable:" and "beta:" in versions.yaml
+STABLE_MODULES := $(shell sed -n -e '/stable:/,/beta:/ s/.*- go.opentelemetry.io\/collector/./p' versions.yaml)
+
+.PHONY: for-all-stable-target
+for-all-stable-target: $(STABLE_MODULES)
+
 # Construct new API state snapshots
 .PHONY: apidiff-build
 apidiff-build:
-	@$(foreach pkg,$(ALL_PKGS),$(call exec-command,./internal/buildscripts/gen-apidiff.sh -p $(pkg)))
+	@$(MAKE) --silent for-all-stable-target TARGET="apidiff-build-mod"
 
-# If we are running in CI, change input directory
-ifeq ($(CI), true)
-APICOMPARE_OPTS=$(COMPARE_OPTS)
-else
-APICOMPARE_OPTS=-d "./internal/data/apidiff"
-endif
-
-# Compare API state snapshots
+# Compare API state snapshots and log differences
 .PHONY: apidiff-compare
 apidiff-compare:
-	@$(foreach pkg,$(ALL_PKGS),$(call exec-command,./internal/buildscripts/compare-apidiff.sh -p $(pkg)))
+	@$(MAKE) --silent for-all-stable-target TARGET="apidiff-compare-mod"
+
+# Compare API state snapshots and fail if there are differences
+.PHONY: apidiff-check
+apidiff-check:
+	@$(MAKE) --silent for-all-stable-target TARGET="apidiff-check-mod"
 
 .PHONY: multimod-verify
 multimod-verify:
@@ -349,12 +366,15 @@ endif
 clean:
 	test -d bin && $(RM) bin/*
 
+# renovate: datasource=docker depName=lycheeverse/lychee
+LYCHEE_IMAGE=lycheeverse/lychee:0.24.2@sha256:e2d19e57cf6ab037026f20b8e449a1f30d9d7f81eef4194763aab2eab20bd28d
+
 .PHONY: checklinks
 checklinks:
 	command -v $(DOCKERCMD) >/dev/null 2>&1 || { echo >&2 "$(DOCKERCMD) not installed. Install before continuing"; exit 1; }
 	$(DOCKERCMD) run -w /home/repo --rm \
 		--mount 'type=bind,source='$(PWD)',target=/home/repo' \
-		lycheeverse/lychee \
+		$(LYCHEE_IMAGE) \
 		--config .github/lychee.toml \
 		--root-dir /home/repo \
 		-v \
@@ -416,3 +436,34 @@ gendistributions:
 .PHONY: generate-chloggen-components
 generate-chloggen-components:
 	$(GITHUBGEN) chloggen-components
+
+SCHEMA_DIRS := $(shell find $(CURDIR) -path "*testdata*" -prune -o -path "*internal/metadata/*" -prune -o -name "config.schema.yaml" -exec dirname {} \; | sort -u)
+
+# SCHEMA_CHECK_DIRS is the subset of SCHEMA_DIRS that the `check-schemas`
+# CI step regenerates and diffs. Limited to schemas whose Go source schemagen
+# currently reproduces byte-for-byte; pre-existing shared-library schemas
+# (config/configgrpc, scraperhelper, etc.) have a separate maintenance
+# lifecycle and aren't in scope. Add a dir here once it generates cleanly.
+SCHEMA_CHECK_DIRS := exporter/debugexporter \
+                     exporter/otlpexporter \
+                     exporter/otlphttpexporter \
+                     receiver/otlpreceiver \
+                     processor/batchprocessor \
+                     processor/memorylimiterprocessor \
+                     extension/memorylimiterextension \
+                     extension/zpagesextension \
+                     internal/memorylimiter
+
+.PHONY: generate-schemas
+generate-schemas:
+	@$(foreach dir,$(SCHEMA_DIRS), cd $(SRC_ROOT)/cmd/schemagen && go run . $(abspath $(dir)) -o $(abspath $(dir));)
+
+# check-schemas regenerates the in-scope schemas in place and fails if the
+# working tree changed — mirroring the contrib `schemas-and-templates` shard.
+# Hand-edits to these schemas will be wiped; rich descriptions must come from
+# Go doc comments (which schemagen propagates) or from an `overlayFile` in
+# `.schemagen.yaml`.
+.PHONY: check-schemas
+check-schemas:
+	@$(foreach dir,$(SCHEMA_CHECK_DIRS), cd $(SRC_ROOT)/cmd/schemagen && go run . $(SRC_ROOT)/$(dir) -o $(SRC_ROOT)/$(dir);)
+	@git diff --exit-code -- $(SCHEMA_CHECK_DIRS:%=%/config.schema.yaml) || { echo 'Config schemas are out of date, please run "make check-schemas" and commit the changes in this PR.'; exit 1; }

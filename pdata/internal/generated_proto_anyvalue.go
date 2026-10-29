@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"go.opentelemetry.io/collector/pdata/internal/json"
+	"go.opentelemetry.io/collector/pdata/internal/metadata"
 	"go.opentelemetry.io/collector/pdata/internal/proto"
 )
 
@@ -23,8 +24,54 @@ func (m *AnyValue) GetValue() any {
 	return nil
 }
 
+func (m *AnyValue) deleteValue() {
+	if m == nil {
+		return
+	}
+	switch ov := m.Value.(type) {
+	case *AnyValue_StringValue:
+		deleteAnyValue_StringValue(ov)
+	case *AnyValue_BoolValue:
+		deleteAnyValue_BoolValue(ov)
+	case *AnyValue_IntValue:
+		deleteAnyValue_IntValue(ov)
+	case *AnyValue_DoubleValue:
+		deleteAnyValue_DoubleValue(ov)
+	case *AnyValue_ArrayValue:
+		deleteAnyValue_ArrayValue(ov)
+	case *AnyValue_KvlistValue:
+		deleteAnyValue_KvlistValue(ov)
+	case *AnyValue_BytesValue:
+		deleteAnyValue_BytesValue(ov)
+	case *AnyValue_StringValueStrindex:
+		deleteAnyValue_StringValueStrindex(ov)
+	}
+	m.Value = nil
+}
+
+var (
+	protoPoolAnyValue_StringValue = sync.Pool{
+		New: func() any {
+			return &AnyValue_StringValue{}
+		},
+	}
+)
+
 type AnyValue_StringValue struct {
 	StringValue string
+}
+
+func NewAnyValue_StringValue() *AnyValue_StringValue {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &AnyValue_StringValue{}
+	}
+	return protoPoolAnyValue_StringValue.Get().(*AnyValue_StringValue)
+}
+
+func deleteAnyValue_StringValue(v *AnyValue_StringValue) {
+	// Called only when pool is enabled
+	v.StringValue = ""
+	protoPoolAnyValue_StringValue.Put(v)
 }
 
 func (m *AnyValue) GetStringValue() string {
@@ -34,8 +81,43 @@ func (m *AnyValue) GetStringValue() string {
 	return ""
 }
 
+func (m *AnyValue) SetStringValue(val string) {
+	if m.Value != nil {
+		// Reuse message if possible, otherwise delete and create a new one.
+		if v, ok := m.GetValue().(*AnyValue_StringValue); ok {
+			v.StringValue = val
+			return
+		}
+		m.deleteValue()
+	}
+	v := NewAnyValue_StringValue()
+	v.StringValue = val
+	m.Value = v
+}
+
+var (
+	protoPoolAnyValue_BoolValue = sync.Pool{
+		New: func() any {
+			return &AnyValue_BoolValue{}
+		},
+	}
+)
+
 type AnyValue_BoolValue struct {
 	BoolValue bool
+}
+
+func NewAnyValue_BoolValue() *AnyValue_BoolValue {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &AnyValue_BoolValue{}
+	}
+	return protoPoolAnyValue_BoolValue.Get().(*AnyValue_BoolValue)
+}
+
+func deleteAnyValue_BoolValue(v *AnyValue_BoolValue) {
+	// Called only when pool is enabled
+	v.BoolValue = false
+	protoPoolAnyValue_BoolValue.Put(v)
 }
 
 func (m *AnyValue) GetBoolValue() bool {
@@ -45,8 +127,43 @@ func (m *AnyValue) GetBoolValue() bool {
 	return false
 }
 
+func (m *AnyValue) SetBoolValue(val bool) {
+	if m.Value != nil {
+		// Reuse message if possible, otherwise delete and create a new one.
+		if v, ok := m.GetValue().(*AnyValue_BoolValue); ok {
+			v.BoolValue = val
+			return
+		}
+		m.deleteValue()
+	}
+	v := NewAnyValue_BoolValue()
+	v.BoolValue = val
+	m.Value = v
+}
+
+var (
+	protoPoolAnyValue_IntValue = sync.Pool{
+		New: func() any {
+			return &AnyValue_IntValue{}
+		},
+	}
+)
+
 type AnyValue_IntValue struct {
 	IntValue int64
+}
+
+func NewAnyValue_IntValue() *AnyValue_IntValue {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &AnyValue_IntValue{}
+	}
+	return protoPoolAnyValue_IntValue.Get().(*AnyValue_IntValue)
+}
+
+func deleteAnyValue_IntValue(v *AnyValue_IntValue) {
+	// Called only when pool is enabled
+	v.IntValue = int64(0)
+	protoPoolAnyValue_IntValue.Put(v)
 }
 
 func (m *AnyValue) GetIntValue() int64 {
@@ -56,8 +173,43 @@ func (m *AnyValue) GetIntValue() int64 {
 	return int64(0)
 }
 
+func (m *AnyValue) SetIntValue(val int64) {
+	if m.Value != nil {
+		// Reuse message if possible, otherwise delete and create a new one.
+		if v, ok := m.GetValue().(*AnyValue_IntValue); ok {
+			v.IntValue = val
+			return
+		}
+		m.deleteValue()
+	}
+	v := NewAnyValue_IntValue()
+	v.IntValue = val
+	m.Value = v
+}
+
+var (
+	protoPoolAnyValue_DoubleValue = sync.Pool{
+		New: func() any {
+			return &AnyValue_DoubleValue{}
+		},
+	}
+)
+
 type AnyValue_DoubleValue struct {
 	DoubleValue float64
+}
+
+func NewAnyValue_DoubleValue() *AnyValue_DoubleValue {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &AnyValue_DoubleValue{}
+	}
+	return protoPoolAnyValue_DoubleValue.Get().(*AnyValue_DoubleValue)
+}
+
+func deleteAnyValue_DoubleValue(v *AnyValue_DoubleValue) {
+	// Called only when pool is enabled
+	v.DoubleValue = float64(0)
+	protoPoolAnyValue_DoubleValue.Put(v)
 }
 
 func (m *AnyValue) GetDoubleValue() float64 {
@@ -67,8 +219,43 @@ func (m *AnyValue) GetDoubleValue() float64 {
 	return float64(0)
 }
 
+func (m *AnyValue) SetDoubleValue(val float64) {
+	if m.Value != nil {
+		// Reuse message if possible, otherwise delete and create a new one.
+		if v, ok := m.GetValue().(*AnyValue_DoubleValue); ok {
+			v.DoubleValue = val
+			return
+		}
+		m.deleteValue()
+	}
+	v := NewAnyValue_DoubleValue()
+	v.DoubleValue = val
+	m.Value = v
+}
+
+var (
+	protoPoolAnyValue_ArrayValue = sync.Pool{
+		New: func() any {
+			return &AnyValue_ArrayValue{}
+		},
+	}
+)
+
 type AnyValue_ArrayValue struct {
 	ArrayValue *ArrayValue
+}
+
+func NewAnyValue_ArrayValue() *AnyValue_ArrayValue {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &AnyValue_ArrayValue{}
+	}
+	return protoPoolAnyValue_ArrayValue.Get().(*AnyValue_ArrayValue)
+}
+
+func deleteAnyValue_ArrayValue(v *AnyValue_ArrayValue) {
+	// Called only when pool is enabled
+	v.ArrayValue = nil
+	protoPoolAnyValue_ArrayValue.Put(v)
 }
 
 func (m *AnyValue) GetArrayValue() *ArrayValue {
@@ -78,8 +265,29 @@ func (m *AnyValue) GetArrayValue() *ArrayValue {
 	return nil
 }
 
+var (
+	protoPoolAnyValue_KvlistValue = sync.Pool{
+		New: func() any {
+			return &AnyValue_KvlistValue{}
+		},
+	}
+)
+
 type AnyValue_KvlistValue struct {
 	KvlistValue *KeyValueList
+}
+
+func NewAnyValue_KvlistValue() *AnyValue_KvlistValue {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &AnyValue_KvlistValue{}
+	}
+	return protoPoolAnyValue_KvlistValue.Get().(*AnyValue_KvlistValue)
+}
+
+func deleteAnyValue_KvlistValue(v *AnyValue_KvlistValue) {
+	// Called only when pool is enabled
+	v.KvlistValue = nil
+	protoPoolAnyValue_KvlistValue.Put(v)
 }
 
 func (m *AnyValue) GetKvlistValue() *KeyValueList {
@@ -89,8 +297,29 @@ func (m *AnyValue) GetKvlistValue() *KeyValueList {
 	return nil
 }
 
+var (
+	protoPoolAnyValue_BytesValue = sync.Pool{
+		New: func() any {
+			return &AnyValue_BytesValue{}
+		},
+	}
+)
+
 type AnyValue_BytesValue struct {
 	BytesValue []byte
+}
+
+func NewAnyValue_BytesValue() *AnyValue_BytesValue {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &AnyValue_BytesValue{}
+	}
+	return protoPoolAnyValue_BytesValue.Get().(*AnyValue_BytesValue)
+}
+
+func deleteAnyValue_BytesValue(v *AnyValue_BytesValue) {
+	// Called only when pool is enabled
+	v.BytesValue = nil
+	protoPoolAnyValue_BytesValue.Put(v)
 }
 
 func (m *AnyValue) GetBytesValue() []byte {
@@ -98,6 +327,66 @@ func (m *AnyValue) GetBytesValue() []byte {
 		return v.BytesValue
 	}
 	return nil
+}
+
+func (m *AnyValue) SetBytesValue(val []byte) {
+	if m.Value != nil {
+		// Reuse message if possible, otherwise delete and create a new one.
+		if v, ok := m.GetValue().(*AnyValue_BytesValue); ok {
+			v.BytesValue = val
+			return
+		}
+		m.deleteValue()
+	}
+	v := NewAnyValue_BytesValue()
+	v.BytesValue = val
+	m.Value = v
+}
+
+var (
+	protoPoolAnyValue_StringValueStrindex = sync.Pool{
+		New: func() any {
+			return &AnyValue_StringValueStrindex{}
+		},
+	}
+)
+
+type AnyValue_StringValueStrindex struct {
+	StringValueStrindex int32
+}
+
+func NewAnyValue_StringValueStrindex() *AnyValue_StringValueStrindex {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &AnyValue_StringValueStrindex{}
+	}
+	return protoPoolAnyValue_StringValueStrindex.Get().(*AnyValue_StringValueStrindex)
+}
+
+func deleteAnyValue_StringValueStrindex(v *AnyValue_StringValueStrindex) {
+	// Called only when pool is enabled
+	v.StringValueStrindex = int32(0)
+	protoPoolAnyValue_StringValueStrindex.Put(v)
+}
+
+func (m *AnyValue) GetStringValueStrindex() int32 {
+	if v, ok := m.GetValue().(*AnyValue_StringValueStrindex); ok {
+		return v.StringValueStrindex
+	}
+	return int32(0)
+}
+
+func (m *AnyValue) SetStringValueStrindex(val int32) {
+	if m.Value != nil {
+		// Reuse message if possible, otherwise delete and create a new one.
+		if v, ok := m.GetValue().(*AnyValue_StringValueStrindex); ok {
+			v.StringValueStrindex = val
+			return
+		}
+		m.deleteValue()
+	}
+	v := NewAnyValue_StringValueStrindex()
+	v.StringValueStrindex = val
+	m.Value = v
 }
 
 type AnyValue struct {
@@ -110,52 +399,10 @@ var (
 			return &AnyValue{}
 		},
 	}
-
-	ProtoPoolAnyValue_StringValue = sync.Pool{
-		New: func() any {
-			return &AnyValue_StringValue{}
-		},
-	}
-
-	ProtoPoolAnyValue_BoolValue = sync.Pool{
-		New: func() any {
-			return &AnyValue_BoolValue{}
-		},
-	}
-
-	ProtoPoolAnyValue_IntValue = sync.Pool{
-		New: func() any {
-			return &AnyValue_IntValue{}
-		},
-	}
-
-	ProtoPoolAnyValue_DoubleValue = sync.Pool{
-		New: func() any {
-			return &AnyValue_DoubleValue{}
-		},
-	}
-
-	ProtoPoolAnyValue_ArrayValue = sync.Pool{
-		New: func() any {
-			return &AnyValue_ArrayValue{}
-		},
-	}
-
-	ProtoPoolAnyValue_KvlistValue = sync.Pool{
-		New: func() any {
-			return &AnyValue_KvlistValue{}
-		},
-	}
-
-	ProtoPoolAnyValue_BytesValue = sync.Pool{
-		New: func() any {
-			return &AnyValue_BytesValue{}
-		},
-	}
 )
 
 func NewAnyValue() *AnyValue {
-	if !UseProtoPooling.IsEnabled() {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
 		return &AnyValue{}
 	}
 	return protoPoolAnyValue.Get().(*AnyValue)
@@ -166,45 +413,11 @@ func DeleteAnyValue(orig *AnyValue, nullable bool) {
 		return
 	}
 
-	if !UseProtoPooling.IsEnabled() {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
 		orig.Reset()
 		return
 	}
-	switch ov := orig.Value.(type) {
-	case *AnyValue_StringValue:
-		if UseProtoPooling.IsEnabled() {
-			ov.StringValue = ""
-			ProtoPoolAnyValue_StringValue.Put(ov)
-		}
-	case *AnyValue_BoolValue:
-		if UseProtoPooling.IsEnabled() {
-			ov.BoolValue = false
-			ProtoPoolAnyValue_BoolValue.Put(ov)
-		}
-	case *AnyValue_IntValue:
-		if UseProtoPooling.IsEnabled() {
-			ov.IntValue = int64(0)
-			ProtoPoolAnyValue_IntValue.Put(ov)
-		}
-	case *AnyValue_DoubleValue:
-		if UseProtoPooling.IsEnabled() {
-			ov.DoubleValue = float64(0)
-			ProtoPoolAnyValue_DoubleValue.Put(ov)
-		}
-	case *AnyValue_ArrayValue:
-		DeleteArrayValue(ov.ArrayValue, true)
-		ov.ArrayValue = nil
-		ProtoPoolAnyValue_ArrayValue.Put(ov)
-	case *AnyValue_KvlistValue:
-		DeleteKeyValueList(ov.KvlistValue, true)
-		ov.KvlistValue = nil
-		ProtoPoolAnyValue_KvlistValue.Put(ov)
-	case *AnyValue_BytesValue:
-		if UseProtoPooling.IsEnabled() {
-			ov.BytesValue = nil
-			ProtoPoolAnyValue_BytesValue.Put(ov)
-		}
-	}
+	orig.deleteValue()
 	orig.Reset()
 	if nullable {
 		protoPoolAnyValue.Put(orig)
@@ -226,75 +439,45 @@ func CopyAnyValue(dest, src *AnyValue) *AnyValue {
 	}
 	switch t := src.Value.(type) {
 	case *AnyValue_StringValue:
-		var ov *AnyValue_StringValue
-		if !UseProtoPooling.IsEnabled() {
-			ov = &AnyValue_StringValue{}
-		} else {
-			ov = ProtoPoolAnyValue_StringValue.Get().(*AnyValue_StringValue)
-		}
+		ov := NewAnyValue_StringValue()
 		ov.StringValue = t.StringValue
 		dest.Value = ov
 
 	case *AnyValue_BoolValue:
-		var ov *AnyValue_BoolValue
-		if !UseProtoPooling.IsEnabled() {
-			ov = &AnyValue_BoolValue{}
-		} else {
-			ov = ProtoPoolAnyValue_BoolValue.Get().(*AnyValue_BoolValue)
-		}
+		ov := NewAnyValue_BoolValue()
 		ov.BoolValue = t.BoolValue
 		dest.Value = ov
 
 	case *AnyValue_IntValue:
-		var ov *AnyValue_IntValue
-		if !UseProtoPooling.IsEnabled() {
-			ov = &AnyValue_IntValue{}
-		} else {
-			ov = ProtoPoolAnyValue_IntValue.Get().(*AnyValue_IntValue)
-		}
+		ov := NewAnyValue_IntValue()
 		ov.IntValue = t.IntValue
 		dest.Value = ov
 
 	case *AnyValue_DoubleValue:
-		var ov *AnyValue_DoubleValue
-		if !UseProtoPooling.IsEnabled() {
-			ov = &AnyValue_DoubleValue{}
-		} else {
-			ov = ProtoPoolAnyValue_DoubleValue.Get().(*AnyValue_DoubleValue)
-		}
+		ov := NewAnyValue_DoubleValue()
 		ov.DoubleValue = t.DoubleValue
 		dest.Value = ov
 
 	case *AnyValue_ArrayValue:
-		var ov *AnyValue_ArrayValue
-		if !UseProtoPooling.IsEnabled() {
-			ov = &AnyValue_ArrayValue{}
-		} else {
-			ov = ProtoPoolAnyValue_ArrayValue.Get().(*AnyValue_ArrayValue)
-		}
+		ov := NewAnyValue_ArrayValue()
 		ov.ArrayValue = NewArrayValue()
 		CopyArrayValue(ov.ArrayValue, t.ArrayValue)
 		dest.Value = ov
 
 	case *AnyValue_KvlistValue:
-		var ov *AnyValue_KvlistValue
-		if !UseProtoPooling.IsEnabled() {
-			ov = &AnyValue_KvlistValue{}
-		} else {
-			ov = ProtoPoolAnyValue_KvlistValue.Get().(*AnyValue_KvlistValue)
-		}
+		ov := NewAnyValue_KvlistValue()
 		ov.KvlistValue = NewKeyValueList()
 		CopyKeyValueList(ov.KvlistValue, t.KvlistValue)
 		dest.Value = ov
 
 	case *AnyValue_BytesValue:
-		var ov *AnyValue_BytesValue
-		if !UseProtoPooling.IsEnabled() {
-			ov = &AnyValue_BytesValue{}
-		} else {
-			ov = ProtoPoolAnyValue_BytesValue.Get().(*AnyValue_BytesValue)
-		}
-		ov.BytesValue = t.BytesValue
+		ov := NewAnyValue_BytesValue()
+		ov.BytesValue = append(ov.BytesValue[:0], t.BytesValue...)
+		dest.Value = ov
+
+	case *AnyValue_StringValueStrindex:
+		ov := NewAnyValue_StringValueStrindex()
+		ov.StringValueStrindex = t.StringValueStrindex
 		dest.Value = ov
 
 	default:
@@ -386,6 +569,9 @@ func (orig *AnyValue) MarshalJSON(dest *json.Stream) {
 
 		dest.WriteObjectField("bytesValue")
 		dest.WriteBytes(orig.BytesValue)
+	case *AnyValue_StringValueStrindex:
+		dest.WriteObjectField("stringValueStrindex")
+		dest.WriteInt32(orig.StringValueStrindex)
 	}
 	dest.WriteObjectEnd()
 }
@@ -397,86 +583,57 @@ func (orig *AnyValue) UnmarshalJSON(iter *json.Iterator) {
 
 		case "stringValue", "string_value":
 			{
-				var ov *AnyValue_StringValue
-				if !UseProtoPooling.IsEnabled() {
-					ov = &AnyValue_StringValue{}
-				} else {
-					ov = ProtoPoolAnyValue_StringValue.Get().(*AnyValue_StringValue)
-				}
+				ov := NewAnyValue_StringValue()
 				ov.StringValue = iter.ReadString()
 				orig.Value = ov
 			}
 		case "boolValue", "bool_value":
 			{
-				var ov *AnyValue_BoolValue
-				if !UseProtoPooling.IsEnabled() {
-					ov = &AnyValue_BoolValue{}
-				} else {
-					ov = ProtoPoolAnyValue_BoolValue.Get().(*AnyValue_BoolValue)
-				}
+				ov := NewAnyValue_BoolValue()
 				ov.BoolValue = iter.ReadBool()
 				orig.Value = ov
 			}
 		case "intValue", "int_value":
 			{
-				var ov *AnyValue_IntValue
-				if !UseProtoPooling.IsEnabled() {
-					ov = &AnyValue_IntValue{}
-				} else {
-					ov = ProtoPoolAnyValue_IntValue.Get().(*AnyValue_IntValue)
-				}
+				ov := NewAnyValue_IntValue()
 				ov.IntValue = iter.ReadInt64()
 				orig.Value = ov
 			}
 		case "doubleValue", "double_value":
 			{
-				var ov *AnyValue_DoubleValue
-				if !UseProtoPooling.IsEnabled() {
-					ov = &AnyValue_DoubleValue{}
-				} else {
-					ov = ProtoPoolAnyValue_DoubleValue.Get().(*AnyValue_DoubleValue)
-				}
+				ov := NewAnyValue_DoubleValue()
 				ov.DoubleValue = iter.ReadFloat64()
 				orig.Value = ov
 			}
 		case "arrayValue", "array_value":
 			{
-				var ov *AnyValue_ArrayValue
-				if !UseProtoPooling.IsEnabled() {
-					ov = &AnyValue_ArrayValue{}
-				} else {
-					ov = ProtoPoolAnyValue_ArrayValue.Get().(*AnyValue_ArrayValue)
-				}
+				ov := NewAnyValue_ArrayValue()
 				ov.ArrayValue = NewArrayValue()
 				ov.ArrayValue.UnmarshalJSON(iter)
 				orig.Value = ov
 			}
 		case "kvlistValue", "kvlist_value":
 			{
-				var ov *AnyValue_KvlistValue
-				if !UseProtoPooling.IsEnabled() {
-					ov = &AnyValue_KvlistValue{}
-				} else {
-					ov = ProtoPoolAnyValue_KvlistValue.Get().(*AnyValue_KvlistValue)
-				}
+				ov := NewAnyValue_KvlistValue()
 				ov.KvlistValue = NewKeyValueList()
 				ov.KvlistValue.UnmarshalJSON(iter)
 				orig.Value = ov
 			}
 		case "bytesValue", "bytes_value":
 			{
-				var ov *AnyValue_BytesValue
-				if !UseProtoPooling.IsEnabled() {
-					ov = &AnyValue_BytesValue{}
-				} else {
-					ov = ProtoPoolAnyValue_BytesValue.Get().(*AnyValue_BytesValue)
-				}
+				ov := NewAnyValue_BytesValue()
 				ov.BytesValue = iter.ReadBytes()
+				orig.Value = ov
+			}
+		case "stringValueStrindex", "string_value_strindex":
+			{
+				ov := NewAnyValue_StringValueStrindex()
+				ov.StringValueStrindex = iter.ReadInt32()
 				orig.Value = ov
 			}
 
 		default:
-			iter.Skip()
+			iter.HandleUnknownField(f)
 		}
 	}
 }
@@ -514,6 +671,9 @@ func (orig *AnyValue) SizeProto() int {
 	case *AnyValue_BytesValue:
 		l = len(orig.BytesValue)
 		n += 1 + proto.Sov(uint64(l)) + l
+	case *AnyValue_StringValueStrindex:
+
+		n += 1 + proto.Sov(uint64(orig.StringValueStrindex))
 	}
 	return n
 }
@@ -576,6 +736,11 @@ func (orig *AnyValue) MarshalProto(buf []byte) int {
 		pos--
 		buf[pos] = 0x3a
 
+	case *AnyValue_StringValueStrindex:
+		pos = proto.EncodeVarint(buf, pos, uint64(orig.StringValueStrindex))
+		pos--
+		buf[pos] = 0x40
+
 	}
 	return len(buf) - pos
 }
@@ -605,12 +770,7 @@ func (orig *AnyValue) UnmarshalProto(buf []byte) error {
 				return err
 			}
 			startPos := pos - length
-			var ov *AnyValue_StringValue
-			if !UseProtoPooling.IsEnabled() {
-				ov = &AnyValue_StringValue{}
-			} else {
-				ov = ProtoPoolAnyValue_StringValue.Get().(*AnyValue_StringValue)
-			}
+			ov := NewAnyValue_StringValue()
 			ov.StringValue = string(buf[startPos:pos])
 			orig.Value = ov
 
@@ -623,12 +783,7 @@ func (orig *AnyValue) UnmarshalProto(buf []byte) error {
 			if err != nil {
 				return err
 			}
-			var ov *AnyValue_BoolValue
-			if !UseProtoPooling.IsEnabled() {
-				ov = &AnyValue_BoolValue{}
-			} else {
-				ov = ProtoPoolAnyValue_BoolValue.Get().(*AnyValue_BoolValue)
-			}
+			ov := NewAnyValue_BoolValue()
 			ov.BoolValue = num != 0
 			orig.Value = ov
 
@@ -641,12 +796,7 @@ func (orig *AnyValue) UnmarshalProto(buf []byte) error {
 			if err != nil {
 				return err
 			}
-			var ov *AnyValue_IntValue
-			if !UseProtoPooling.IsEnabled() {
-				ov = &AnyValue_IntValue{}
-			} else {
-				ov = ProtoPoolAnyValue_IntValue.Get().(*AnyValue_IntValue)
-			}
+			ov := NewAnyValue_IntValue()
 			ov.IntValue = int64(num)
 			orig.Value = ov
 
@@ -659,12 +809,7 @@ func (orig *AnyValue) UnmarshalProto(buf []byte) error {
 			if err != nil {
 				return err
 			}
-			var ov *AnyValue_DoubleValue
-			if !UseProtoPooling.IsEnabled() {
-				ov = &AnyValue_DoubleValue{}
-			} else {
-				ov = ProtoPoolAnyValue_DoubleValue.Get().(*AnyValue_DoubleValue)
-			}
+			ov := NewAnyValue_DoubleValue()
 			ov.DoubleValue = math.Float64frombits(num)
 			orig.Value = ov
 
@@ -678,12 +823,7 @@ func (orig *AnyValue) UnmarshalProto(buf []byte) error {
 				return err
 			}
 			startPos := pos - length
-			var ov *AnyValue_ArrayValue
-			if !UseProtoPooling.IsEnabled() {
-				ov = &AnyValue_ArrayValue{}
-			} else {
-				ov = ProtoPoolAnyValue_ArrayValue.Get().(*AnyValue_ArrayValue)
-			}
+			ov := NewAnyValue_ArrayValue()
 			ov.ArrayValue = NewArrayValue()
 			err = ov.ArrayValue.UnmarshalProto(buf[startPos:pos])
 			if err != nil {
@@ -701,12 +841,7 @@ func (orig *AnyValue) UnmarshalProto(buf []byte) error {
 				return err
 			}
 			startPos := pos - length
-			var ov *AnyValue_KvlistValue
-			if !UseProtoPooling.IsEnabled() {
-				ov = &AnyValue_KvlistValue{}
-			} else {
-				ov = ProtoPoolAnyValue_KvlistValue.Get().(*AnyValue_KvlistValue)
-			}
+			ov := NewAnyValue_KvlistValue()
 			ov.KvlistValue = NewKeyValueList()
 			err = ov.KvlistValue.UnmarshalProto(buf[startPos:pos])
 			if err != nil {
@@ -724,16 +859,24 @@ func (orig *AnyValue) UnmarshalProto(buf []byte) error {
 				return err
 			}
 			startPos := pos - length
-			var ov *AnyValue_BytesValue
-			if !UseProtoPooling.IsEnabled() {
-				ov = &AnyValue_BytesValue{}
-			} else {
-				ov = ProtoPoolAnyValue_BytesValue.Get().(*AnyValue_BytesValue)
-			}
+			ov := NewAnyValue_BytesValue()
 			if length != 0 {
 				ov.BytesValue = make([]byte, length)
 				copy(ov.BytesValue, buf[startPos:pos])
 			}
+			orig.Value = ov
+
+		case 8:
+			if wireType != proto.WireTypeVarint {
+				return fmt.Errorf("proto: wrong wireType = %d for field StringValueStrindex", wireType)
+			}
+			var num uint64
+			num, pos, err = proto.ConsumeVarint(buf, pos)
+			if err != nil {
+				return err
+			}
+			ov := NewAnyValue_StringValueStrindex()
+			ov.StringValueStrindex = int32(num)
 			orig.Value = ov
 
 		default:

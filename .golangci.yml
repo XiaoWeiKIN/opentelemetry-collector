@@ -9,8 +9,10 @@ formatters:
       simplify: true
 
     gofumpt:
-      # Choose whether to use the extra rules
-      extra-rules: true
+      extra:
+        group-params: true
+        clothe-returns: true
+        balance-calls: true
 
     goimports:
       # put imports beginning with prefix after 3rd-party packages;
@@ -57,13 +59,18 @@ linters:
       - std-error-handling
 
     # Excluding configuration per-path, per-linter, per-text and per-source
-    rules: []
-
-    # Log a warning if an exclusion rule is unused.
-    warn-unused: true
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+        text: "^G104:"
 
   # all available settings of specific linters
   settings:
+    modernize:
+      disable:
+        - importcomment
+
     depguard:
       rules:
         denied-deps:
@@ -86,9 +93,9 @@ linters:
             - "!cmd/mdatagen/**" # Exclude mdatagen
           deny:
             - pkg: go.opentelemetry.io/otel/semconv
-              desc: Use go.opentelemetry.io/otel/semconv/v1.38.0 instead. If a newer semconv version has been released, update the depguard rule.
+              desc: Use go.opentelemetry.io/otel/semconv/v1.40.0 instead. If a newer semconv version has been released, update the depguard rule.
           allow:
-            - go.opentelemetry.io/otel/semconv/v1.38.0
+            - go.opentelemetry.io/otel/semconv/v1.40.0
         # Add a different guard rule so that we can ignore tests.
         ignore-in-test:
           # Allow in tests for testing pdata or other receivers/exporters that expect OTLP.
@@ -112,7 +119,7 @@ linters:
 
     gosec:
       excludes:
-        - G104 # FIXME
+        - G115 # FIXME
         - G402
         - G404
 

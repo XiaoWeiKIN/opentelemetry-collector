@@ -20,7 +20,8 @@ func NewFactory() extension.Factory {
 		metadata.Type,
 		createDefaultConfig,
 		create,
-		metadata.ExtensionStability)
+		metadata.ExtensionStability,
+	)
 }
 
 // CreateDefaultConfig creates the default configuration for extension. Notice
@@ -30,5 +31,5 @@ func createDefaultConfig() component.Config {
 }
 
 func create(_ context.Context, set extension.Settings, cfg component.Config) (extension.Extension, error) {
-	return newMemoryLimiter(cfg.(*Config), set.Logger)
+	return newMemoryLimiter(cfg.(*Config), set.Logger, set.TelemetrySettings)
 }

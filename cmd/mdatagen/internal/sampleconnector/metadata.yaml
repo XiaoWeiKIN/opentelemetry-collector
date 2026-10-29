@@ -4,7 +4,7 @@ type: sample
 display_name: Sample Connector
 description: This connector is used for testing purposes to check the output of mdatagen.
 github_project: open-telemetry/opentelemetry-collector
-reaggregation_enabled: true
+override_value_enabled: true
 
 sem_conv_version: 1.9.0
 
@@ -12,7 +12,7 @@ status:
   disable_codecov_badge: true
   class: connector
   stability:
-    development: [metrics_to_metrics]
+    development: [metrics_to_metrics, profiles_to_profiles]
   distributions: []
   unsupported_platforms: [freebsd, illumos]
   codeowners:
@@ -92,6 +92,7 @@ attributes:
     description: Attribute with a known set of string values.
     type: string
     enum: [red, green, blue]
+    requirement_level: conditionally_required
 
   map_attr:
     description: Attribute with a map value.

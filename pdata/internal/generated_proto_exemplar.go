@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"go.opentelemetry.io/collector/pdata/internal/json"
+	"go.opentelemetry.io/collector/pdata/internal/metadata"
 	"go.opentelemetry.io/collector/pdata/internal/proto"
 )
 
@@ -23,8 +24,42 @@ func (m *Exemplar) GetValue() any {
 	return nil
 }
 
+func (m *Exemplar) deleteValue() {
+	if m == nil {
+		return
+	}
+	switch ov := m.Value.(type) {
+	case *Exemplar_AsDouble:
+		deleteExemplar_AsDouble(ov)
+	case *Exemplar_AsInt:
+		deleteExemplar_AsInt(ov)
+	}
+	m.Value = nil
+}
+
+var (
+	protoPoolExemplar_AsDouble = sync.Pool{
+		New: func() any {
+			return &Exemplar_AsDouble{}
+		},
+	}
+)
+
 type Exemplar_AsDouble struct {
 	AsDouble float64
+}
+
+func NewExemplar_AsDouble() *Exemplar_AsDouble {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &Exemplar_AsDouble{}
+	}
+	return protoPoolExemplar_AsDouble.Get().(*Exemplar_AsDouble)
+}
+
+func deleteExemplar_AsDouble(v *Exemplar_AsDouble) {
+	// Called only when pool is enabled
+	v.AsDouble = float64(0)
+	protoPoolExemplar_AsDouble.Put(v)
 }
 
 func (m *Exemplar) GetAsDouble() float64 {
@@ -34,8 +69,43 @@ func (m *Exemplar) GetAsDouble() float64 {
 	return float64(0)
 }
 
+func (m *Exemplar) SetAsDouble(val float64) {
+	if m.Value != nil {
+		// Reuse message if possible, otherwise delete and create a new one.
+		if v, ok := m.GetValue().(*Exemplar_AsDouble); ok {
+			v.AsDouble = val
+			return
+		}
+		m.deleteValue()
+	}
+	v := NewExemplar_AsDouble()
+	v.AsDouble = val
+	m.Value = v
+}
+
+var (
+	protoPoolExemplar_AsInt = sync.Pool{
+		New: func() any {
+			return &Exemplar_AsInt{}
+		},
+	}
+)
+
 type Exemplar_AsInt struct {
 	AsInt int64
+}
+
+func NewExemplar_AsInt() *Exemplar_AsInt {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
+		return &Exemplar_AsInt{}
+	}
+	return protoPoolExemplar_AsInt.Get().(*Exemplar_AsInt)
+}
+
+func deleteExemplar_AsInt(v *Exemplar_AsInt) {
+	// Called only when pool is enabled
+	v.AsInt = int64(0)
+	protoPoolExemplar_AsInt.Put(v)
 }
 
 func (m *Exemplar) GetAsInt() int64 {
@@ -43,6 +113,20 @@ func (m *Exemplar) GetAsInt() int64 {
 		return v.AsInt
 	}
 	return int64(0)
+}
+
+func (m *Exemplar) SetAsInt(val int64) {
+	if m.Value != nil {
+		// Reuse message if possible, otherwise delete and create a new one.
+		if v, ok := m.GetValue().(*Exemplar_AsInt); ok {
+			v.AsInt = val
+			return
+		}
+		m.deleteValue()
+	}
+	v := NewExemplar_AsInt()
+	v.AsInt = val
+	m.Value = v
 }
 
 // Exemplar is a sample input double measurement.
@@ -63,22 +147,10 @@ var (
 			return &Exemplar{}
 		},
 	}
-
-	ProtoPoolExemplar_AsDouble = sync.Pool{
-		New: func() any {
-			return &Exemplar_AsDouble{}
-		},
-	}
-
-	ProtoPoolExemplar_AsInt = sync.Pool{
-		New: func() any {
-			return &Exemplar_AsInt{}
-		},
-	}
 )
 
 func NewExemplar() *Exemplar {
-	if !UseProtoPooling.IsEnabled() {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
 		return &Exemplar{}
 	}
 	return protoPoolExemplar.Get().(*Exemplar)
@@ -89,7 +161,7 @@ func DeleteExemplar(orig *Exemplar, nullable bool) {
 		return
 	}
 
-	if !UseProtoPooling.IsEnabled() {
+	if !metadata.PdataUseProtoPoolingFeatureGate.IsEnabled() {
 		orig.Reset()
 		return
 	}
@@ -97,18 +169,7 @@ func DeleteExemplar(orig *Exemplar, nullable bool) {
 		DeleteKeyValue(&orig.FilteredAttributes[i], false)
 	}
 
-	switch ov := orig.Value.(type) {
-	case *Exemplar_AsDouble:
-		if UseProtoPooling.IsEnabled() {
-			ov.AsDouble = float64(0)
-			ProtoPoolExemplar_AsDouble.Put(ov)
-		}
-	case *Exemplar_AsInt:
-		if UseProtoPooling.IsEnabled() {
-			ov.AsInt = int64(0)
-			ProtoPoolExemplar_AsInt.Put(ov)
-		}
-	}
+	orig.deleteValue()
 	DeleteTraceID(&orig.TraceId, false)
 	DeleteSpanID(&orig.SpanId, false)
 	orig.Reset()
@@ -135,22 +196,12 @@ func CopyExemplar(dest, src *Exemplar) *Exemplar {
 	dest.TimeUnixNano = src.TimeUnixNano
 	switch t := src.Value.(type) {
 	case *Exemplar_AsDouble:
-		var ov *Exemplar_AsDouble
-		if !UseProtoPooling.IsEnabled() {
-			ov = &Exemplar_AsDouble{}
-		} else {
-			ov = ProtoPoolExemplar_AsDouble.Get().(*Exemplar_AsDouble)
-		}
+		ov := NewExemplar_AsDouble()
 		ov.AsDouble = t.AsDouble
 		dest.Value = ov
 
 	case *Exemplar_AsInt:
-		var ov *Exemplar_AsInt
-		if !UseProtoPooling.IsEnabled() {
-			ov = &Exemplar_AsInt{}
-		} else {
-			ov = ProtoPoolExemplar_AsInt.Get().(*Exemplar_AsInt)
-		}
+		ov := NewExemplar_AsInt()
 		ov.AsInt = t.AsInt
 		dest.Value = ov
 
@@ -267,23 +318,13 @@ func (orig *Exemplar) UnmarshalJSON(iter *json.Iterator) {
 
 		case "asDouble", "as_double":
 			{
-				var ov *Exemplar_AsDouble
-				if !UseProtoPooling.IsEnabled() {
-					ov = &Exemplar_AsDouble{}
-				} else {
-					ov = ProtoPoolExemplar_AsDouble.Get().(*Exemplar_AsDouble)
-				}
+				ov := NewExemplar_AsDouble()
 				ov.AsDouble = iter.ReadFloat64()
 				orig.Value = ov
 			}
 		case "asInt", "as_int":
 			{
-				var ov *Exemplar_AsInt
-				if !UseProtoPooling.IsEnabled() {
-					ov = &Exemplar_AsInt{}
-				} else {
-					ov = ProtoPoolExemplar_AsInt.Get().(*Exemplar_AsInt)
-				}
+				ov := NewExemplar_AsInt()
 				ov.AsInt = iter.ReadInt64()
 				orig.Value = ov
 			}
@@ -295,7 +336,7 @@ func (orig *Exemplar) UnmarshalJSON(iter *json.Iterator) {
 
 			orig.SpanId.UnmarshalJSON(iter)
 		default:
-			iter.Skip()
+			iter.HandleUnknownField(f)
 		}
 	}
 }
@@ -427,12 +468,7 @@ func (orig *Exemplar) UnmarshalProto(buf []byte) error {
 			if err != nil {
 				return err
 			}
-			var ov *Exemplar_AsDouble
-			if !UseProtoPooling.IsEnabled() {
-				ov = &Exemplar_AsDouble{}
-			} else {
-				ov = ProtoPoolExemplar_AsDouble.Get().(*Exemplar_AsDouble)
-			}
+			ov := NewExemplar_AsDouble()
 			ov.AsDouble = math.Float64frombits(num)
 			orig.Value = ov
 
@@ -445,12 +481,7 @@ func (orig *Exemplar) UnmarshalProto(buf []byte) error {
 			if err != nil {
 				return err
 			}
-			var ov *Exemplar_AsInt
-			if !UseProtoPooling.IsEnabled() {
-				ov = &Exemplar_AsInt{}
-			} else {
-				ov = ProtoPoolExemplar_AsInt.Get().(*Exemplar_AsInt)
-			}
+			ov := NewExemplar_AsInt()
 			ov.AsInt = int64(num)
 			orig.Value = ov
 

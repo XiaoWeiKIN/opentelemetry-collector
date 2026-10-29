@@ -29,12 +29,12 @@ func (normalProfilesMarshaler) MarshalProfiles(pd pprofile.Profiles) ([]byte, er
 	for i := 0; i < pd.ResourceProfiles().Len(); i++ {
 		resourceProfiles := pd.ResourceProfiles().At(i)
 
-		buffer.WriteString(fmt.Sprintf("ResourceProfiles #%d%s%s\n", i, writeResourceDetails(resourceProfiles.SchemaUrl()), writeAttributesString(resourceProfiles.Resource().Attributes())))
+		fmt.Fprintf(&buffer, "ResourceProfiles #%d%s%s\n", i, writeResourceDetails(resourceProfiles.SchemaUrl()), writeAttributesString(resourceProfiles.Resource().Attributes()))
 
 		for j := 0; j < resourceProfiles.ScopeProfiles().Len(); j++ {
 			scopeProfiles := resourceProfiles.ScopeProfiles().At(j)
 
-			buffer.WriteString(fmt.Sprintf("ScopeProfiles #%d%s%s\n", i, writeScopeDetails(scopeProfiles.Scope().Name(), scopeProfiles.Scope().Version(), scopeProfiles.SchemaUrl()), writeAttributesString(scopeProfiles.Scope().Attributes())))
+			fmt.Fprintf(&buffer, "ScopeProfiles #%d%s%s\n", j, writeScopeDetails(scopeProfiles.Scope().Name(), scopeProfiles.Scope().Version(), scopeProfiles.SchemaUrl()), writeAttributesString(scopeProfiles.Scope().Attributes()))
 
 			for k := 0; k < scopeProfiles.Profiles().Len(); k++ {
 				profile := scopeProfiles.Profiles().At(k)
@@ -47,8 +47,18 @@ func (normalProfilesMarshaler) MarshalProfiles(pd pprofile.Profiles) ([]byte, er
 				if profile.AttributeIndices().Len() > 0 {
 					attrs := []string{}
 					for _, i := range profile.AttributeIndices().AsRaw() {
-						a := dic.AttributeTable().At(int(i))
-						attrs = append(attrs, fmt.Sprintf("%s=%s", dic.StringTable().At(int(a.KeyStrindex())), a.Value().AsString()))
+						attrIdx := int(i)
+						if attrIdx >= dic.AttributeTable().Len() {
+							attrs = append(attrs, fmt.Sprintf("[Missing Dictionary AttributeTable Item #%d]", attrIdx))
+							continue
+						}
+						a := dic.AttributeTable().At(attrIdx)
+						keyIdx := int(a.KeyStrindex())
+						key := fmt.Sprintf("[Missing Dictionary Key String Item #%d]", keyIdx)
+						if keyIdx < dic.StringTable().Len() {
+							key = dic.StringTable().At(keyIdx)
+						}
+						attrs = append(attrs, fmt.Sprintf("%s=%s", key, a.Value().AsString()))
 					}
 
 					buffer.WriteString(" ")

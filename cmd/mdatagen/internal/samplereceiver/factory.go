@@ -17,10 +17,10 @@ import (
 )
 
 // NewFactory returns a receiver.Factory for sample receiver.
-func NewFactory() xreceiver.Factory {
+func NewFactory() receiver.Factory {
 	return xreceiver.NewFactory(
 		metadata.Type,
-		func() component.Config { return &struct{}{} },
+		createDefaultConfig,
 		xreceiver.WithTraces(createTraces, metadata.TracesStability),
 		xreceiver.WithMetrics(createMetrics, metadata.MetricsStability),
 		xreceiver.WithLogs(createLogs, metadata.LogsStability),

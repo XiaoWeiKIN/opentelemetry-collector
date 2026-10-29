@@ -11,6 +11,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -215,7 +217,8 @@ func TestErrorResponses(t *testing.T) {
 			checkErr: func(t *testing.T, err error, srv *httptest.Server) {
 				require.EqualError(t, err, exporterhelper.NewThrottleRetry(
 					status.New(codes.Unavailable, errMsgPrefix(srv)+"503, Message=Server overloaded, Details=[]").Err(),
-					time.Duration(30)*time.Second).Error())
+					time.Duration(30)*time.Second,
+				).Error())
 			},
 		},
 		{
@@ -1130,19 +1133,30 @@ func TestEncoding(t *testing.T) {
 		for _, test := range tests {
 			t.Run(test.name, func(t *testing.T) {
 				srv := createBackend("/v1development/profiles", func(writer http.ResponseWriter, request *http.Request) {
+					assert.Equal(t, []string{pprofileotlp.DevelopmentVersion}, request.Header.Values(pprofileotlp.DevelopmentVersionHeader))
 					assert.Contains(t, request.Header.Get("content-type"), test.expectedEncoding)
 					writer.WriteHeader(http.StatusOK)
 				})
 				defer srv.Close()
 
+				version, err := strconv.Atoi(pprofileotlp.DevelopmentVersion)
+				require.NoError(t, err)
+				configuredVersion := configopaque.String(strconv.Itoa(version + 1))
+				otherConfiguredVersion := configopaque.String(strconv.Itoa(version + 2))
 				cfg := &Config{
 					ClientConfig: confighttp.ClientConfig{
 						Endpoint: srv.URL,
+						Headers: configopaque.MapList{
+							{Name: pprofileotlp.DevelopmentVersionHeader, Value: configuredVersion},
+							{Name: "OTLP-Profiles-Development-Version", Value: otherConfiguredVersion},
+						},
 					},
 					Encoding: test.encoding,
 				}
 				exp, err := createProfiles(context.Background(), set, cfg)
 				require.NoError(t, err)
+				assert.Equal(t, configuredVersion, cfg.ClientConfig.Headers[0].Value)
+				assert.Equal(t, otherConfiguredVersion, cfg.ClientConfig.Headers[1].Value)
 
 				// start the exporter
 				err = exp.Start(context.Background(), componenttest.NewNopHost())
@@ -1173,4 +1187,160 @@ type badReader struct{}
 
 func (b badReader) Read([]byte) (int, error) {
 	return 0, errors.New("Bad read")
+}
+
+type mockTransport struct {
+	roundTripFunc func(req *http.Request) (*http.Response, error)
+}
+
+func (t *mockTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return t.roundTripFunc(req)
+}
+
+func TestExport_ErrorShowsModifiedURL(t *testing.T) {
+	originalURL := "http://localhost:4318/v1/logs"
+	modifiedURL := "https://actual-destination.example.com/v1/logs"
+
+	transport := &mockTransport{
+		roundTripFunc: func(req *http.Request) (*http.Response, error) {
+			parsedModified, err := url.Parse(modifiedURL)
+			require.NoError(t, err)
+			req.URL = parsedModified
+
+			return nil, errors.New("we need an error logged")
+		},
+	}
+
+	client := &http.Client{Transport: transport}
+
+	logger, _ := observer.New(zap.DebugLevel)
+	exp := &baseExporter{
+		client: client,
+		logger: zap.New(logger),
+		config: &Config{
+			Encoding: EncodingProto,
+		},
+	}
+
+	err := exp.export(context.Background(), originalURL, []byte("test data"), nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), modifiedURL, "Error message should contain the modified destination URL")
+	assert.NotContains(t, err.Error(), originalURL, "Error message should NOT contain the original placeholder URL")
+}
+
+func TestPartialSuccess_responseBodyTooLarge(t *testing.T) {
+	srv := createBackend("/v1/metrics", func(writer http.ResponseWriter, _ *http.Request) {
+		response := pmetricotlp.NewExportResponse()
+		response.PartialSuccess().SetErrorMessage(strings.Repeat("x", 70000))
+		response.PartialSuccess().SetRejectedDataPoints(1)
+		b, _ := response.MarshalProto()
+
+		writer.Header().Set("Content-Type", "application/x-protobuf")
+		writer.Header().Set("Content-Length", strconv.Itoa(len(b)))
+		_, err := writer.Write(b)
+		assert.NoError(t, err)
+	})
+	defer srv.Close()
+
+	cfg := &Config{
+		Encoding:        EncodingProto,
+		MetricsEndpoint: srv.URL + "/v1/metrics",
+	}
+	exp, err := createMetrics(context.Background(), exportertest.NewNopSettings(metadata.Type), cfg)
+	require.NoError(t, err)
+	err = exp.Start(context.Background(), componenttest.NewNopHost())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, exp.Shutdown(context.Background()))
+	}()
+
+	err = exp.ConsumeMetrics(context.Background(), pmetric.NewMetrics())
+	require.Error(t, err)
+	assert.True(t, consumererror.IsPermanent(err))
+	assert.Contains(t, err.Error(), "error parsing protobuf response:")
+}
+
+func TestExport_StatusErrorShowsResolvedURL(t *testing.T) {
+	configuredURL := "http://endpoint.invalid/v1/logs"
+
+	// A routing middleware that follows the RoundTripper contract clones the
+	// request instead of mutating it, so only the response carries the
+	// rewritten URL.
+	cloneWithURL := func(rawURL string) func(*http.Request) *http.Request {
+		return func(req *http.Request) *http.Request {
+			resolved := req.Clone(req.Context())
+			var err error
+			resolved.URL, err = url.Parse(rawURL)
+			require.NoError(t, err)
+			return resolved
+		}
+	}
+
+	// Built at runtime so gosec does not see a credential in a URL literal.
+	withUserinfo, err := url.Parse("https://actual-destination.example.com/v1/logs")
+	require.NoError(t, err)
+	withUserinfo.User = url.UserPassword("user", "secret")
+
+	tests := []struct {
+		name         string
+		respRequest  func(*http.Request) *http.Request
+		wantContains string
+		wantAbsent   []string
+	}{
+		{
+			name:         "rewritten URL taken from the response request",
+			respRequest:  cloneWithURL("https://actual-destination.example.com/v1/logs"),
+			wantContains: "https://actual-destination.example.com/v1/logs",
+			wantAbsent:   []string{configuredURL},
+		},
+		{
+			name:         "userinfo in the rewritten URL is redacted",
+			respRequest:  cloneWithURL(withUserinfo.String()),
+			wantContains: withUserinfo.Redacted(),
+			wantAbsent:   []string{"secret", configuredURL},
+		},
+		{
+			name:         "response without request falls back to the configured URL",
+			respRequest:  func(*http.Request) *http.Request { return nil },
+			wantContains: configuredURL,
+		},
+		{
+			name:         "response request without URL falls back to the configured URL",
+			respRequest:  func(*http.Request) *http.Request { return &http.Request{} },
+			wantContains: configuredURL,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			transport := &mockTransport{
+				roundTripFunc: func(req *http.Request) (*http.Response, error) {
+					return &http.Response{
+						StatusCode: http.StatusNotFound,
+						Header:     make(http.Header),
+						Body:       http.NoBody,
+						Request:    tt.respRequest(req),
+					}, nil
+				},
+			}
+
+			logger, _ := observer.New(zap.DebugLevel)
+			exp := &baseExporter{
+				client: &http.Client{Transport: transport},
+				logger: zap.New(logger),
+				config: &Config{
+					Encoding: EncodingProto,
+				},
+			}
+
+			err := exp.export(context.Background(), configuredURL, []byte("test data"), nil)
+
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.wantContains)
+			for _, absent := range tt.wantAbsent {
+				assert.NotContains(t, err.Error(), absent)
+			}
+		})
+	}
 }

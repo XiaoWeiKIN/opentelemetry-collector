@@ -32,17 +32,19 @@ type testServerMiddleware struct {
 func newTestServerMiddleware(name string) component.Component {
 	return &testServerMiddleware{
 		Extension: extensionmiddlewaretest.NewNop(),
-		GetHTTPHandlerFunc: func(handler http.Handler) (http.Handler, error) {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				// Append middleware name to the URL path
-				r.URL.Path += name + "/"
+		GetHTTPHandlerFunc: func(_ context.Context) (extensionmiddleware.WrapHTTPHandlerFunc, error) {
+			return func(_ context.Context, handler http.Handler) (http.Handler, error) {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					// Append middleware name to the URL path
+					r.URL.Path += name + "/"
 
-				// Call the next handler in the chain
-				handler.ServeHTTP(w, r)
+					// Call the next handler in the chain
+					handler.ServeHTTP(w, r)
 
-				// Add middleware name to the response
-				_, _ = w.Write([]byte("\r\nserved by " + name))
-			}), nil
+					// Add middleware name to the response
+					_, _ = w.Write([]byte("\r\nserved by " + name))
+				}), nil
+			}, nil
 		},
 	}
 }
@@ -101,7 +103,7 @@ func TestServerMiddleware(t *testing.T) {
 
 			// Create a test handler that responds with the request path
 			handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				_, _ = w.Write([]byte("OK{" + r.URL.Path + "}"))
+				_, _ = w.Write([]byte("OK{" + r.URL.Path + "}")) // #nosec G705
 			})
 
 			// Create the server

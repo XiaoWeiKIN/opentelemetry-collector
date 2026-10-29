@@ -21,7 +21,7 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/confmap"
-	"go.opentelemetry.io/collector/confmap/xconfmap"
+	"go.opentelemetry.io/collector/extension/extensioncapabilities"
 	"go.opentelemetry.io/collector/otelcol/internal/grpclog"
 	"go.opentelemetry.io/collector/service"
 )
@@ -103,13 +103,15 @@ type Collector struct {
 
 	configProvider *ConfigProvider
 
-	serviceConfig *service.Config
-	service       *service.Service
-	state         *atomic.Int64
+	service *service.Service
+	state   *atomic.Int64
 
 	// shutdownChan is used to terminate the collector.
 	shutdownChan chan struct{}
 	shutdownOnce sync.Once
+
+	// wg is used by Shutdown to wait for Run to complete all cleanup.
+	wg sync.WaitGroup
 
 	// signalsChannel is used to receive termination signals from the OS.
 	signalsChannel chan os.Signal
@@ -117,6 +119,10 @@ type Collector struct {
 	asyncErrorChannel          chan error
 	bc                         *bufferedCore
 	updateConfigProviderLogger func(core zapcore.Core)
+
+	// currentFingerprint holds a fingerprint of the last successfully applied
+	// configuration, derived from the raw (pre-decode) configuration map.
+	currentFingerprint *configFingerprint
 }
 
 // NewCollector creates and returns a new instance of Collector.
@@ -156,10 +162,12 @@ func (col *Collector) GetState() State {
 }
 
 // Shutdown shuts down the collector server.
+// If Run has been called, Shutdown blocks until Run completes all cleanup.
 func (col *Collector) Shutdown() {
 	col.shutdownOnce.Do(func() {
 		close(col.shutdownChan)
 	})
+	col.wg.Wait()
 }
 
 func buildModuleInfo(m map[component.Type]string) map[component.Type]service.ModuleInfo {
@@ -180,22 +188,35 @@ func (col *Collector) setupConfigurationComponents(ctx context.Context) error {
 		return fmt.Errorf("failed to initialize factories: %w", err)
 	}
 
-	cfg, err := col.configProvider.Get(ctx, factories)
+	cfg, rawConf, err := col.configProvider.getWithConf(ctx, factories)
 	if err != nil {
 		return fmt.Errorf("failed to get config: %w", err)
 	}
 
-	if err = xconfmap.Validate(cfg); err != nil {
+	if err = confmap.Validate(cfg); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	col.serviceConfig = &cfg.Service
+	// Fingerprint the configuration to compare configuration changes. This
+	// must happen here before any component can mutate the configuration.
+	var fingerprint *configFingerprint
+	if service.ReceiverPartialReloadEnabled() {
+		fp, fpErr := fingerprintForPartialReload(rawConf, cfg)
+		if fpErr != nil {
+			return fpErr
+		}
+		fingerprint = &fp
+	}
 
 	conf := confmap.New()
 
 	if err = conf.Marshal(cfg); err != nil {
 		return fmt.Errorf("could not marshal configuration: %w", err)
 	}
+
+	// Build a pre-expansion view of the configuration (with provider references
+	// such as ${env:FOO} still intact and configopaque.String fields redacted).
+	unexpandedConf := redactByMirroring(col.configProvider.mapResolver.UnexpandedConf(), conf)
 
 	// Wrap the buildZapLogger to append LoggingOptions from collector settings,
 	// since service.Settings.LoggingOptions is deprecated.
@@ -209,8 +230,8 @@ func (col *Collector) setupConfigurationComponents(ctx context.Context) error {
 	}
 
 	col.service, err = service.New(ctx, service.Settings{
-		BuildInfo:     col.set.BuildInfo,
-		CollectorConf: conf,
+		BuildInfo:      col.set.BuildInfo,
+		ConfigSnapshot: extensioncapabilities.NewConfigSnapshot(conf, unexpandedConf),
 
 		ReceiversConfigs:    cfg.Receivers,
 		ReceiversFactories:  factories.Receivers,
@@ -257,12 +278,35 @@ func (col *Collector) setupConfigurationComponents(ctx context.Context) error {
 	if err = col.service.Start(ctx); err != nil {
 		return multierr.Combine(err, col.service.Shutdown(ctx))
 	}
+	if service.ReceiverPartialReloadEnabled() {
+		col.currentFingerprint = fingerprint
+	}
 	col.setCollectorState(StateRunning)
 
 	return nil
 }
 
 func (col *Collector) reloadConfiguration(ctx context.Context) error {
+	if service.ReceiverPartialReloadEnabled() && col.currentFingerprint != nil {
+		reloaded, err := col.tryPartialReceiverReload(ctx)
+		if reloaded && err == nil {
+			// Partial reload succeeded; the service keeps running.
+			return nil
+		}
+		if reloaded {
+			// Partial reload was attempted but failed mid-way. The graph may
+			// be in a partially modified state (some receivers shut down,
+			// nodes removed, new nodes without components), so it cannot be
+			// resumed or repaired incrementally. Fall back to a full reload
+			// below, which discards the existing service and graph entirely
+			// and rebuilds from scratch, consistent with how a non-receiver
+			// config change is handled.
+			col.service.Logger().Warn("Partial receiver reload failed, falling back to full reload", zap.Error(err))
+		}
+		// Otherwise, the config change was not receiver-only; fall through to
+		// a full reload.
+	}
+
 	col.service.Logger().Warn("Config updated, restart service")
 	col.setCollectorState(StateClosing)
 
@@ -277,6 +321,48 @@ func (col *Collector) reloadConfiguration(ctx context.Context) error {
 	return nil
 }
 
+// tryPartialReceiverReload attempts to reload only the receiver components if
+// the configuration change is limited to receivers. The bool return indicates
+// whether a partial reload was attempted (true) or the change requires a full
+// reload (false). When true, the error indicates whether the reload succeeded.
+func (col *Collector) tryPartialReceiverReload(ctx context.Context) (bool, error) {
+	factories, err := col.set.Factories()
+	if err != nil {
+		return false, err
+	}
+
+	newCfg, rawConf, err := col.configProvider.getWithConf(ctx, factories)
+	if err != nil {
+		return false, err
+	}
+
+	if validateErr := confmap.Validate(newCfg); validateErr != nil {
+		return false, validateErr
+	}
+
+	newFingerprint, err := fingerprintForPartialReload(rawConf, newCfg)
+	if err != nil {
+		return false, err
+	}
+
+	if !receiversOnlyChanged(*col.currentFingerprint, newFingerprint, isConnectorID(newCfg.Connectors)) {
+		return false, nil
+	}
+
+	col.service.Logger().Info("Config updated, performing partial receiver reload")
+	if err = col.service.UpdateReceivers(ctx,
+		changedReceivers(*col.currentFingerprint, newFingerprint),
+		newCfg.Receivers,
+		factories.Receivers,
+		newCfg.Service.Pipelines,
+	); err != nil {
+		return true, fmt.Errorf("partial receiver reload failed: %w", err)
+	}
+
+	col.currentFingerprint = &newFingerprint
+	return true, nil
+}
+
 func (col *Collector) DryRun(ctx context.Context) error {
 	factories, err := col.set.Factories()
 	if err != nil {
@@ -288,7 +374,7 @@ func (col *Collector) DryRun(ctx context.Context) error {
 		return fmt.Errorf("failed to get config: %w", err)
 	}
 
-	if err := xconfmap.Validate(cfg); err != nil {
+	if err := confmap.Validate(cfg); err != nil {
 		return err
 	}
 
@@ -324,7 +410,22 @@ func newFallbackLogger(options []zap.Option) (*zap.Logger, error) {
 // Run starts the collector according to the given configuration, and waits for it to complete.
 // Consecutive calls to Run are not allowed, Run shouldn't be called once a collector is shut down.
 // Sets up the control logic for config reloading and shutdown.
+// If Shutdown was called before Run, Run returns nil after cleaning up resources.
 func (col *Collector) Run(ctx context.Context) error {
+	col.wg.Add(1)
+	defer col.wg.Done()
+
+	// If Shutdown was already called, return immediately without starting the service.
+	select {
+	case <-col.shutdownChan:
+		col.setCollectorState(StateClosed)
+		if err := col.configProvider.Shutdown(ctx); err != nil {
+			return fmt.Errorf("failed to shutdown config provider: %w", err)
+		}
+		return nil
+	default:
+	}
+
 	// setupConfigurationComponents is the "main" function responsible for startup
 	if err := col.setupConfigurationComponents(ctx); err != nil {
 		col.setCollectorState(StateClosed)

@@ -65,7 +65,7 @@ func TestNewDefaultClientConfig(t *testing.T) {
 	expected := ClientConfig{
 		TLS:          configtls.NewDefaultClientConfig(),
 		Keepalive:    configoptional.Some(keepalive),
-		BalancerName: BalancerName(),
+		BalancerName: DefaultBalancerName,
 	}
 
 	result := NewDefaultClientConfig()
@@ -124,11 +124,12 @@ func TestDefaultGrpcClientSettings(t *testing.T) {
 	}
 	opts, err := cc.getGrpcDialOptions(context.Background(), nil, componenttest.NewNopTelemetrySettings(), []ToClientConnOption{})
 	require.NoError(t, err)
-	/* Expecting 2 DialOptions:
+	/* Expecting 3 DialOptions:
+	 * - WithDefaultCallOptions (WaitForReady)
 	 * - WithTransportCredentials (TLS)
 	 * - WithStatsHandler (always, for self-telemetry)
 	 */
-	assert.Len(t, opts, 2)
+	assert.Len(t, opts, 3)
 }
 
 func TestGrpcClientExtraOption(t *testing.T) {
@@ -146,12 +147,13 @@ func TestGrpcClientExtraOption(t *testing.T) {
 	)
 	require.NoError(t, err)
 	/* Expecting 3 DialOptions:
+	 * - WithDefaultCallOptions (WaitForReady)
 	 * - WithTransportCredentials (TLS)
 	 * - WithStatsHandler (always, for self-telemetry)
 	 * - extraOpt
 	 */
-	assert.Len(t, opts, 3)
-	assert.Equal(t, opts[2], extraOpt)
+	assert.Len(t, opts, 4)
+	assert.Equal(t, opts[3], extraOpt)
 }
 
 func TestAllGrpcClientSettings(t *testing.T) {
@@ -266,11 +268,64 @@ func TestAllGrpcClientSettings(t *testing.T) {
 func TestSanitizeEndpoint(t *testing.T) {
 	cfg := NewDefaultClientConfig()
 	cfg.Endpoint = "dns://authority/backend.example.com:4317"
-	assert.Equal(t, "authority/backend.example.com:4317", cfg.sanitizedEndpoint())
+	assert.Equal(t, "backend.example.com:4317", cfg.sanitizedEndpoint())
 	cfg.Endpoint = "dns:///backend.example.com:4317"
 	assert.Equal(t, "backend.example.com:4317", cfg.sanitizedEndpoint())
 	cfg.Endpoint = "dns:////backend.example.com:4317"
 	assert.Equal(t, "/backend.example.com:4317", cfg.sanitizedEndpoint())
+	cfg.Endpoint = "passthrough:///backend.example.com:4317"
+	assert.Equal(t, "backend.example.com:4317", cfg.sanitizedEndpoint())
+	cfg.Endpoint = "xds:///my-service:4317"
+	assert.Equal(t, "my-service:4317", cfg.sanitizedEndpoint())
+	// Unparseable URI with :// falls back to returning the endpoint as-is.
+	cfg.Endpoint = "bad\x7f://host:4317"
+	assert.Equal(t, "bad\x7f://host:4317", cfg.sanitizedEndpoint())
+}
+
+func TestGrpcDialTarget(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+		expected string
+	}{
+		{
+			name:     "bare endpoint passed as-is",
+			endpoint: "backend.example.com:4317",
+			expected: "backend.example.com:4317",
+		},
+		{
+			name:     "http prefix is stripped",
+			endpoint: "http://backend.example.com:4317",
+			expected: "backend.example.com:4317",
+		},
+		{
+			name:     "https prefix is stripped",
+			endpoint: "https://backend.example.com:4317",
+			expected: "backend.example.com:4317",
+		},
+		{
+			name:     "dns scheme is preserved for grpc",
+			endpoint: "dns:///backend.example.com:4317",
+			expected: "dns:///backend.example.com:4317",
+		},
+		{
+			name:     "passthrough scheme is preserved for grpc",
+			endpoint: "passthrough:///backend.example.com:4317",
+			expected: "passthrough:///backend.example.com:4317",
+		},
+		{
+			name:     "xds scheme is preserved for grpc",
+			endpoint: "xds:///my-service:4317",
+			expected: "xds:///my-service:4317",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := NewDefaultClientConfig()
+			cfg.Endpoint = tt.endpoint
+			assert.Equal(t, tt.expected, cfg.grpcDialTarget())
+		})
+	}
 }
 
 func TestValidateEndpoint(t *testing.T) {
@@ -279,6 +334,27 @@ func TestValidateEndpoint(t *testing.T) {
 	assert.NoError(t, cfg.Validate())
 	cfg.Endpoint = "unix:///my/unix/socket.sock"
 	assert.NoError(t, cfg.Validate())
+}
+
+func TestValidateGrpcSchemeEndpoint(t *testing.T) {
+	cfg := NewDefaultClientConfig()
+	cfg.Endpoint = "passthrough:///backend.example.com:4317"
+	assert.NoError(t, cfg.Validate())
+	cfg.Endpoint = "dns:///backend.example.com:4317"
+	assert.NoError(t, cfg.Validate())
+}
+
+func TestToClientConnWithPassthroughEndpoint(t *testing.T) {
+	cfg := ClientConfig{
+		Endpoint: "passthrough:///localhost:1234",
+		TLS: configtls.ClientConfig{
+			Insecure: true,
+		},
+	}
+	conn, err := cfg.ToClientConn(context.Background(), nil, componenttest.NewNopTelemetrySettings())
+	require.NoError(t, err)
+	require.NotNil(t, conn)
+	assert.NoError(t, conn.Close())
 }
 
 func TestHeaders(t *testing.T) {
@@ -369,7 +445,7 @@ func TestGrpcServerValidate(t *testing.T) {
 					Endpoint: "0.0.0.0:1234",
 				},
 			},
-			err: "invalid read_buffer_size value",
+			err: "read_buffer_size value must be greater than or equal to 0",
 		},
 		{
 			gss: &ServerConfig{
@@ -378,7 +454,7 @@ func TestGrpcServerValidate(t *testing.T) {
 					Endpoint: "0.0.0.0:1234",
 				},
 			},
-			err: "invalid write_buffer_size value",
+			err: "write_buffer_size value must be greater than or equal to 0",
 		},
 	}
 
@@ -517,6 +593,17 @@ func TestGRPCClientSettingsError(t *testing.T) {
 			},
 		},
 		{
+			err: "per-rpc credentials failure",
+			settings: ClientConfig{
+				Endpoint: "localhost:1234",
+				TLS:      configtls.ClientConfig{Insecure: true},
+				Auth:     configoptional.Some(configauth.Config{AuthenticatorID: testAuthID}),
+			},
+			extensions: map[component.ID]component.Component{
+				testAuthID: extensionauthtest.NewErr(errors.New("per-rpc credentials failure")),
+			},
+		},
+		{
 			err: "unsupported compression type \"zlib\"",
 			settings: ClientConfig{
 				Endpoint: "localhost:1234",
@@ -566,7 +653,7 @@ func TestUseSecure(t *testing.T) {
 	}
 	dialOpts, err := cc.getGrpcDialOptions(context.Background(), nil, componenttest.NewNopTelemetrySettings(), []ToClientConnOption{})
 	require.NoError(t, err)
-	assert.Len(t, dialOpts, 2)
+	assert.Len(t, dialOpts, 3)
 }
 
 func TestGRPCServerSettingsError(t *testing.T) {
@@ -634,7 +721,7 @@ func TestGRPCServerSettings_ToListener_Error(t *testing.T) {
 	assert.Error(t, err)
 }
 
-func TestHttpReception(t *testing.T) {
+func TestHTTPReception(t *testing.T) {
 	tests := []struct {
 		name           string
 		tlsServerCreds configoptional.Optional[configtls.ServerConfig]
@@ -1318,4 +1405,27 @@ func tempSocketName(t *testing.T) string {
 	socket := tmpfile.Name()
 	require.NoError(t, os.Remove(socket))
 	return socket
+}
+
+func TestGrpcClientUserAgent(t *testing.T) {
+	cc := &ClientConfig{
+		TLS: configtls.ClientConfig{
+			Insecure: true,
+		},
+		UserAgent: "my-distribution/1.0",
+	}
+	opts, err := cc.getGrpcDialOptions(
+		context.Background(),
+		nil,
+		componenttest.NewNopTelemetrySettings(),
+		[]ToClientConnOption{},
+	)
+	require.NoError(t, err)
+	/* Expecting 3 DialOptions:
+	 * - WithDefaultCallOptions (WaitForReady)
+	 * - WithTransportCredentials (TLS)
+	 * - WithStatsHandler (always, for self-telemetry)
+	 * - WithUserAgent (from UserAgent field)
+	 */
+	assert.Len(t, opts, 4)
 }

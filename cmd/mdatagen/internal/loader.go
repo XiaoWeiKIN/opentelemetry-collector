@@ -7,13 +7,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"go.opentelemetry.io/collector/cmd/mdatagen/internal/helpers"
 	"go.opentelemetry.io/collector/confmap/confmaptest"
 	"go.opentelemetry.io/collector/confmap/provider/fileprovider"
 )
+
+// warnWriter receives mdatagen's non-fatal warnings; overridable in tests.
+var warnWriter io.Writer = os.Stderr
+
+// warnDeprecatedFeatureGateFlags runs before the central config is applied,
+// so it reports deprecated flags the metadata.yaml set.
+func warnDeprecatedFeatureGateFlags(md Metadata) {
+	for _, g := range md.FeatureGates {
+		if g.SkipStrictValidation {
+			fmt.Fprintf(warnWriter, "WARNING: feature gate %q sets deprecated 'skip_strict_validation'; move it to the central .mdatagen.yaml (see cmd/mdatagen/README.md, \"Central configuration file\").\n", g.ID)
+		}
+	}
+}
 
 func setAttributeDefaultFields(attrs map[AttributeName]Attribute) {
 	for k, v := range attrs {
@@ -25,10 +42,22 @@ func setAttributeDefaultFields(attrs map[AttributeName]Attribute) {
 	}
 }
 
+func setMetricVersioned(metrics map[MetricName]Metric) {
+	for k, v := range metrics {
+		keyStr := string(k)
+		if _, _, found := strings.Cut(keyStr, "@"); found {
+			v.Versioned = true
+			metrics[k] = v
+		}
+	}
+}
+
 type TemplateContext struct {
 	Metadata
 	// Package name for generated code.
 	Package string
+	// ImportRootPath is the repo-local import prefix used to localize same-tree schema references.
+	ImportRootPath string
 }
 
 func LoadMetadata(filePath string) (Metadata, error) {
@@ -41,8 +70,12 @@ func LoadMetadata(filePath string) (Metadata, error) {
 	if err != nil {
 		return Metadata{}, err
 	}
+	conf.Delete("reaggregation_enabled")
 
-	md := Metadata{ShortFolderName: shortFolderName(filePath), Tests: Tests{Host: "newMdatagenNopHost()"}}
+	md := Metadata{
+		ShortFolderName: shortFolderName(filePath),
+		Tests:           Tests{Host: "newMdatagenNopHost()"},
+	}
 	err = conf.Unmarshal(&md)
 	if err != nil {
 		return md, err
@@ -53,11 +86,31 @@ func LoadMetadata(filePath string) (Metadata, error) {
 	}
 	md.PackageName = packageName
 
+	if md.Status != nil {
+		md.GithubLabel, err = githubLabel(filepath.Dir(filePath), md.Status.Class, md.ShortFolderName)
+		if err != nil {
+			return md, fmt.Errorf("unable to determine github label: %w", err)
+		}
+	}
+
 	if md.ScopeName == "" {
 		md.ScopeName = packageName
 	}
 	if md.GeneratedPackageName == "" {
 		md.GeneratedPackageName = "metadata"
+	}
+
+	warnDeprecatedFeatureGateFlags(md)
+
+	// Fold in the central config before validation so we keep supporting the metadata.yaml ones.
+	central, err := loadCentralConfig(filepath.Dir(filePath))
+	if err != nil {
+		return md, fmt.Errorf("unable to load central mdatagen config: %w", err)
+	}
+	central.applyTo(&md)
+
+	if err := md.expandSemConvRefs(); err != nil {
+		return md, err
 	}
 
 	if err := md.Validate(); err != nil {
@@ -66,6 +119,8 @@ func LoadMetadata(filePath string) (Metadata, error) {
 
 	setAttributeDefaultFields(md.Attributes)
 	setAttributeDefaultFields(md.ResourceAttributes)
+	setMetricVersioned(md.Metrics)
+	setMetricVersioned(md.Telemetry.Metrics)
 
 	return md, nil
 }
@@ -89,13 +144,43 @@ func shortFolderName(filePath string) string {
 	return parentFolder
 }
 
+// githubLabel looks up the component in the repo's .github/component_labels.txt, defaulting to <class>/<short folder name>.
+func githubLabel(componentDir, class, shortName string) (string, error) {
+	fallback := class + "/" + shortName
+	rootDir, err := helpers.RootModuleDir(componentDir)
+	if err != nil {
+		return "", err
+	}
+	labels, err := os.ReadFile(filepath.Clean(filepath.Join(rootDir, ".github", "component_labels.txt")))
+	if errors.Is(err, fs.ErrNotExist) {
+		return fallback, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	absDir, err := filepath.Abs(componentDir)
+	if err != nil {
+		return "", err
+	}
+	relDir, err := filepath.Rel(rootDir, absDir)
+	if err != nil {
+		return "", err
+	}
+	relDir = filepath.ToSlash(relDir)
+	for line := range strings.Lines(string(labels)) {
+		if fields := strings.Fields(line); len(fields) == 2 && fields[0] == relDir {
+			return fields[1], nil
+		}
+	}
+	return fallback, nil
+}
+
 func packageName(filePath string) (string, error) {
 	cmd := exec.Command("go", "list", "-f", "{{.ImportPath}}")
 	cmd.Dir = filePath
 	output, err := cmd.Output()
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			return "", fmt.Errorf("unable to determine package name: %v failed: (stderr) %v", cmd.Args, string(ee.Stderr))
 		}
 

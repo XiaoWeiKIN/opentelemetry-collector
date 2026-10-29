@@ -66,7 +66,7 @@ func TestPartitionBatcher_NoSplit_MinThresholdZero_TimeoutDisabled(t *testing.T)
 			}
 
 			sink := requesttest.NewSink()
-			ba := newPartitionBatcher(cfg, tt.sizer, nil, newWorkerPool(tt.maxWorkers), sink.Export, zap.NewNop())
+			ba := newPartitionBatcher(cfg, tt.sizer, nil, newWorkerPool(tt.maxWorkers), sink.Export, zap.NewNop(), nil)
 			require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 			t.Cleanup(func() {
 				require.NoError(t, ba.Shutdown(context.Background()))
@@ -82,11 +82,9 @@ func TestPartitionBatcher_NoSplit_MinThresholdZero_TimeoutDisabled(t *testing.T)
 			ba.Consume(context.Background(), &requesttest.FakeRequest{Items: 35, Bytes: 35}, done)
 			ba.Consume(context.Background(), &requesttest.FakeRequest{Items: 2, Bytes: 2}, done)
 			assert.Eventually(t, func() bool {
-				return sink.RequestsCount() == 5 && (sink.ItemsCount() == 75 || sink.BytesCount() == 75)
+				return sink.RequestsCount() == 5 && (sink.ItemsCount() == 75 || sink.BytesCount() == 75) &&
+					done.errors.Load() == 1 && done.success.Load() == 5
 			}, 1*time.Second, 10*time.Millisecond)
-			// Check that done callback is called for the right number of times.
-			assert.EqualValues(t, 1, done.errors.Load())
-			assert.EqualValues(t, 5, done.success.Load())
 		})
 	}
 }
@@ -132,7 +130,7 @@ func TestPartitionBatcher_NoSplit_TimeoutDisabled(t *testing.T) {
 			}
 
 			sink := requesttest.NewSink()
-			ba := newPartitionBatcher(cfg, tt.sizer, nil, newWorkerPool(tt.maxWorkers), sink.Export, zap.NewNop())
+			ba := newPartitionBatcher(cfg, tt.sizer, nil, newWorkerPool(tt.maxWorkers), sink.Export, zap.NewNop(), nil)
 			require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 
 			done := newFakeDone()
@@ -213,7 +211,7 @@ func TestPartitionBatcher_NoSplit_WithTimeout(t *testing.T) {
 			}
 
 			sink := requesttest.NewSink()
-			ba := newPartitionBatcher(cfg, tt.sizer, nil, newWorkerPool(tt.maxWorkers), sink.Export, zap.NewNop())
+			ba := newPartitionBatcher(cfg, tt.sizer, nil, newWorkerPool(tt.maxWorkers), sink.Export, zap.NewNop(), nil)
 			require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 			t.Cleanup(func() {
 				require.NoError(t, ba.Shutdown(context.Background()))
@@ -285,7 +283,7 @@ func TestPartitionBatcher_Split_TimeoutDisabled(t *testing.T) {
 			}
 
 			sink := requesttest.NewSink()
-			ba := newPartitionBatcher(cfg, tt.sizer, nil, newWorkerPool(tt.maxWorkers), sink.Export, zap.NewNop())
+			ba := newPartitionBatcher(cfg, tt.sizer, nil, newWorkerPool(tt.maxWorkers), sink.Export, zap.NewNop(), nil)
 			require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 
 			done := newFakeDone()
@@ -333,7 +331,7 @@ func TestPartitionBatcher_Shutdown(t *testing.T) {
 	}
 
 	sink := requesttest.NewSink()
-	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(2), sink.Export, zap.NewNop())
+	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(2), sink.Export, zap.NewNop(), nil)
 	require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 
 	done := newFakeDone()
@@ -362,7 +360,7 @@ func TestPartitionBatcher_MergeError(t *testing.T) {
 	}
 
 	sink := requesttest.NewSink()
-	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(2), sink.Export, zap.NewNop())
+	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(2), sink.Export, zap.NewNop(), nil)
 	require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 	t.Cleanup(func() {
 		require.NoError(t, ba.Shutdown(context.Background()))
@@ -396,7 +394,7 @@ func TestPartitionBatcher_PartialSuccessError(t *testing.T) {
 	core, observed := observer.New(zap.WarnLevel)
 	logger := zap.New(core)
 	sink := requesttest.NewSink()
-	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(1), sink.Export, logger)
+	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(1), sink.Export, logger, nil)
 	require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 
 	done := newFakeDone()
@@ -438,7 +436,7 @@ func TestSPartitionBatcher_PartialSuccessError_AfterOkRequest(t *testing.T) {
 	core, observed := observer.New(zap.WarnLevel)
 	logger := zap.New(core)
 	sink := requesttest.NewSink()
-	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(1), sink.Export, logger)
+	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(1), sink.Export, logger, nil)
 	require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 
 	done := newFakeDone()
@@ -498,7 +496,7 @@ func TestShardBatcher_EmptyRequestList(t *testing.T) {
 	}
 
 	sink := requesttest.NewSink()
-	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(1), sink.Export, zap.NewNop())
+	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(1), sink.Export, zap.NewNop(), nil)
 	require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 	t.Cleanup(func() {
 		require.NoError(t, ba.Shutdown(context.Background()))
@@ -548,7 +546,7 @@ func TestPartitionBatcher_ContextMerging(t *testing.T) {
 				MinSize:      10,
 			}
 			sink := requesttest.NewSink()
-			ba := newPartitionBatcher(cfg, request.NewItemsSizer(), tt.mergeCtxFunc, newWorkerPool(1), sink.Export, zap.NewNop())
+			ba := newPartitionBatcher(cfg, request.NewItemsSizer(), tt.mergeCtxFunc, newWorkerPool(1), sink.Export, zap.NewNop(), nil)
 			require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
 
 			done := newFakeDone()
@@ -559,4 +557,75 @@ func TestPartitionBatcher_ContextMerging(t *testing.T) {
 			assert.EqualValues(t, 2, done.success.Load())
 		})
 	}
+}
+
+func TestPartitionBatcher_OnEmptyCallbackTriggered(t *testing.T) {
+	// Use a short idle timeout so the partition is reported empty quickly.
+	cfg := BatchConfig{
+		FlushTimeout: 10 * time.Millisecond,
+		Sizer:        request.SizerTypeItems,
+		MinSize:      100, // High min size to ensure data doesn't flush immediately
+		Partition:    PartitionConfig{IdleTimeout: 100 * time.Millisecond},
+	}
+
+	sink := requesttest.NewSink()
+	onEmptyCalled := &atomic.Int64{}
+	onEmpty := func() {
+		onEmptyCalled.Add(1)
+	}
+
+	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(1), sink.Export, zap.NewNop(), onEmpty)
+	require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
+	t.Cleanup(func() {
+		require.NoError(t, ba.Shutdown(context.Background()))
+	})
+
+	// Consume some data below min threshold so it stays in currentBatch
+	done := newFakeDone()
+	ba.Consume(context.Background(), &requesttest.FakeRequest{Items: 5}, done)
+
+	// Wait for the batch to be flushed by timeout
+	assert.Eventually(t, func() bool {
+		return sink.RequestsCount() == 1
+	}, 500*time.Millisecond, 10*time.Millisecond)
+
+	// Now wait for the idle timeout (100ms).
+	// The onEmpty callback should be called after the partition is idle for this duration.
+	assert.Eventually(t, func() bool {
+		return onEmptyCalled.Load() >= 1
+	}, 500*time.Millisecond, 10*time.Millisecond)
+}
+
+func TestPartitionBatcher_OnEmptyNotCalledWithActiveData(t *testing.T) {
+	// Test that onEmpty is NOT called when data keeps flowing
+	cfg := BatchConfig{
+		FlushTimeout: 20 * time.Millisecond,
+		Sizer:        request.SizerTypeItems,
+		MinSize:      5,
+		Partition:    NewDefaultPartitionConfig(),
+	}
+
+	sink := requesttest.NewSink()
+	onEmptyCalled := &atomic.Int64{}
+	onEmpty := func() {
+		onEmptyCalled.Add(1)
+	}
+
+	ba := newPartitionBatcher(cfg, request.NewItemsSizer(), nil, newWorkerPool(1), sink.Export, zap.NewNop(), onEmpty)
+	require.NoError(t, ba.Start(context.Background(), componenttest.NewNopHost()))
+	t.Cleanup(func() {
+		require.NoError(t, ba.Shutdown(context.Background()))
+	})
+
+	done := newFakeDone()
+	// Keep sending data to prevent idle timeout
+	for range 5 {
+		ba.Consume(context.Background(), &requesttest.FakeRequest{Items: 5}, done)
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	// Data was flowing, onEmpty should not have been called
+	assert.Equal(t, int64(0), onEmptyCalled.Load())
+	// But data should have been flushed
+	assert.GreaterOrEqual(t, sink.RequestsCount(), 1)
 }

@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata/metricdatatest"
+	"go.opentelemetry.io/otel/trace"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componenttest"
@@ -21,6 +22,7 @@ import (
 	"go.opentelemetry.io/collector/featuregate"
 	"go.opentelemetry.io/collector/receiver"
 	"go.opentelemetry.io/collector/receiver/receiverhelper/internal"
+	"go.opentelemetry.io/collector/receiver/receiverhelper/internal/metadata"
 	"go.opentelemetry.io/collector/receiver/receiverhelper/internal/metadatatest"
 )
 
@@ -41,9 +43,9 @@ type testParams struct {
 }
 
 func TestReceiveTraceDataOp(t *testing.T) {
-	originalState := NewReceiverMetricsGate.IsEnabled()
+	originalState := metadata.ReceiverhelperNewReceiverMetricsFeatureGate.IsEnabled()
 	t.Cleanup(func() {
-		require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), originalState))
+		require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), originalState))
 	})
 
 	for _, tc := range []struct {
@@ -51,7 +53,7 @@ func TestReceiveTraceDataOp(t *testing.T) {
 		enabled bool
 	}{{"gate_enabled", true}, {"gate_disabled", false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), tc.enabled))
+			require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), tc.enabled))
 			testTelemetry(t, func(t *testing.T, tt *componenttest.Telemetry) {
 				parentCtx, parentSpan := tt.NewTelemetrySettings().TracerProvider.Tracer("test").Start(context.Background(), t.Name())
 				defer parentSpan.End()
@@ -108,7 +110,8 @@ func TestReceiveTraceDataOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(acceptedSpans),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -117,7 +120,8 @@ func TestReceiveTraceDataOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(refusedSpans),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -126,7 +130,8 @@ func TestReceiveTraceDataOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(failedSpans),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -152,7 +157,8 @@ func TestReceiveTraceDataOp(t *testing.T) {
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
 								attribute.String(internal.TransportKey, transport),
-								attribute.String("outcome", outcome)),
+								attribute.String("outcome", outcome),
+							),
 							Value: count,
 						})
 					}
@@ -164,9 +170,9 @@ func TestReceiveTraceDataOp(t *testing.T) {
 }
 
 func TestReceiveLogsOp(t *testing.T) {
-	originalState := NewReceiverMetricsGate.IsEnabled()
+	originalState := metadata.ReceiverhelperNewReceiverMetricsFeatureGate.IsEnabled()
 	t.Cleanup(func() {
-		require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), originalState))
+		require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), originalState))
 	})
 
 	for _, tc := range []struct {
@@ -174,7 +180,7 @@ func TestReceiveLogsOp(t *testing.T) {
 		enabled bool
 	}{{"gate_enabled", true}, {"gate_disabled", false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), tc.enabled))
+			require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), tc.enabled))
 			testTelemetry(t, func(t *testing.T, tt *componenttest.Telemetry) {
 				parentCtx, parentSpan := tt.NewTelemetrySettings().TracerProvider.Tracer("test").Start(context.Background(), t.Name())
 				defer parentSpan.End()
@@ -230,7 +236,8 @@ func TestReceiveLogsOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(acceptedLogRecords),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -239,7 +246,8 @@ func TestReceiveLogsOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(refusedLogRecords),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -248,7 +256,8 @@ func TestReceiveLogsOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(failedLogRecords),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -274,7 +283,8 @@ func TestReceiveLogsOp(t *testing.T) {
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
 								attribute.String(internal.TransportKey, transport),
-								attribute.String("outcome", outcome)),
+								attribute.String("outcome", outcome),
+							),
 							Value: count,
 						})
 					}
@@ -286,9 +296,9 @@ func TestReceiveLogsOp(t *testing.T) {
 }
 
 func TestReceiveMetricsOp(t *testing.T) {
-	originalState := NewReceiverMetricsGate.IsEnabled()
+	originalState := metadata.ReceiverhelperNewReceiverMetricsFeatureGate.IsEnabled()
 	t.Cleanup(func() {
-		require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), originalState))
+		require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), originalState))
 	})
 
 	for _, tc := range []struct {
@@ -296,7 +306,7 @@ func TestReceiveMetricsOp(t *testing.T) {
 		enabled bool
 	}{{"gate_enabled", true}, {"gate_disabled", false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), tc.enabled))
+			require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), tc.enabled))
 			testTelemetry(t, func(t *testing.T, tt *componenttest.Telemetry) {
 				parentCtx, parentSpan := tt.NewTelemetrySettings().TracerProvider.Tracer("test").Start(context.Background(), t.Name())
 				defer parentSpan.End()
@@ -354,7 +364,8 @@ func TestReceiveMetricsOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(acceptedMetricPoints),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -363,7 +374,8 @@ func TestReceiveMetricsOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(refusedMetricPoints),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -372,7 +384,8 @@ func TestReceiveMetricsOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(failedMetricPoints),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -398,7 +411,8 @@ func TestReceiveMetricsOp(t *testing.T) {
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
 								attribute.String(internal.TransportKey, transport),
-								attribute.String("outcome", outcome)),
+								attribute.String("outcome", outcome),
+							),
 							Value: count,
 						})
 					}
@@ -410,9 +424,9 @@ func TestReceiveMetricsOp(t *testing.T) {
 }
 
 func TestReceiveProfilesOp(t *testing.T) {
-	originalState := NewReceiverMetricsGate.IsEnabled()
+	originalState := metadata.ReceiverhelperNewReceiverMetricsFeatureGate.IsEnabled()
 	t.Cleanup(func() {
-		require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), originalState))
+		require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), originalState))
 	})
 
 	for _, tc := range []struct {
@@ -420,7 +434,7 @@ func TestReceiveProfilesOp(t *testing.T) {
 		enabled bool
 	}{{"gate_enabled", true}, {"gate_disabled", false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), tc.enabled))
+			require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), tc.enabled))
 			testTelemetry(t, func(t *testing.T, tt *componenttest.Telemetry) {
 				parentCtx, parentSpan := tt.NewTelemetrySettings().TracerProvider.Tracer("test").Start(context.Background(), t.Name())
 				defer parentSpan.End()
@@ -476,7 +490,8 @@ func TestReceiveProfilesOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(acceptedSamples),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -485,7 +500,8 @@ func TestReceiveProfilesOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(refusedSamples),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -494,7 +510,8 @@ func TestReceiveProfilesOp(t *testing.T) {
 						{
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
-								attribute.String(internal.TransportKey, transport)),
+								attribute.String(internal.TransportKey, transport),
+							),
 							Value: int64(failedSamples),
 						},
 					}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -520,7 +537,8 @@ func TestReceiveProfilesOp(t *testing.T) {
 							Attributes: attribute.NewSet(
 								attribute.String(internal.ReceiverKey, receiverID.String()),
 								attribute.String(internal.TransportKey, transport),
-								attribute.String("outcome", outcome)),
+								attribute.String("outcome", outcome),
+							),
 							Value: count,
 						})
 					}
@@ -532,9 +550,9 @@ func TestReceiveProfilesOp(t *testing.T) {
 }
 
 func TestReceiveWithLongLivedCtx(t *testing.T) {
-	originalState := NewReceiverMetricsGate.IsEnabled()
+	originalState := metadata.ReceiverhelperNewReceiverMetricsFeatureGate.IsEnabled()
 	t.Cleanup(func() {
-		require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), originalState))
+		require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), originalState))
 	})
 
 	for _, tc := range []struct {
@@ -542,7 +560,7 @@ func TestReceiveWithLongLivedCtx(t *testing.T) {
 		enabled bool
 	}{{"gate_enabled", true}, {"gate_disabled", false}} {
 		t.Run(tc.name, func(t *testing.T) {
-			require.NoError(t, featuregate.GlobalRegistry().Set(NewReceiverMetricsGate.ID(), tc.enabled))
+			require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ReceiverhelperNewReceiverMetricsFeatureGate.ID(), tc.enabled))
 			tt := componenttest.NewTelemetry()
 			t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
@@ -600,6 +618,59 @@ func TestReceiveWithLongLivedCtx(t *testing.T) {
 	}
 }
 
+func TestReceiveWithLongLivedCtxNoParent(t *testing.T) {
+	tt := componenttest.NewTelemetry()
+	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
+
+	rec, err := NewObsReport(ObsReportSettings{
+		ReceiverID:             receiverID,
+		Transport:              transport,
+		LongLivedCtx:           true,
+		ReceiverCreateSettings: receiver.Settings{ID: receiverID, TelemetrySettings: tt.NewTelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()},
+	})
+	require.NoError(t, err)
+
+	ctx := rec.StartTracesOp(context.Background())
+	rec.EndTracesOp(ctx, format, 7, nil)
+
+	spans := tt.SpanRecorder.Ended()
+	require.Len(t, spans, 1)
+	assert.False(t, spans[0].Parent().IsValid())
+	assert.Empty(t, spans[0].Links())
+}
+
+func BenchmarkStartTracesOpLongLivedCtx(b *testing.B) {
+	rec, err := NewObsReport(ObsReportSettings{
+		ReceiverID:             receiverID,
+		Transport:              transport,
+		LongLivedCtx:           true,
+		ReceiverCreateSettings: receiver.Settings{ID: receiverID, TelemetrySettings: componenttest.NewNopTelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()},
+	})
+	require.NoError(b, err)
+
+	parentCtx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID:    trace.TraceID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
+		SpanID:     trace.SpanID{1, 2, 3, 4, 5, 6, 7, 8},
+		TraceFlags: trace.FlagsSampled,
+		Remote:     true,
+	}))
+
+	for _, bc := range []struct {
+		name string
+		ctx  context.Context
+	}{
+		{"no_parent", context.Background()},
+		{"with_parent", parentCtx},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				rec.StartTracesOp(bc.ctx)
+			}
+		})
+	}
+}
+
 func TestCheckReceiverTracesViews(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
@@ -619,7 +690,8 @@ func TestCheckReceiverTracesViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(7),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -628,7 +700,8 @@ func TestCheckReceiverTracesViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(0),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -637,7 +710,8 @@ func TestCheckReceiverTracesViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(0),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -662,7 +736,8 @@ func TestCheckReceiverMetricsViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(7),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -671,7 +746,8 @@ func TestCheckReceiverMetricsViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(0),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -680,7 +756,8 @@ func TestCheckReceiverMetricsViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(0),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -705,7 +782,8 @@ func TestCheckReceiverLogsViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(7),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -714,7 +792,8 @@ func TestCheckReceiverLogsViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(0),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -723,7 +802,8 @@ func TestCheckReceiverLogsViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(0),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -748,7 +828,8 @@ func TestCheckReceiverProfilesViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(7),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -757,7 +838,8 @@ func TestCheckReceiverProfilesViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(0),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -766,7 +848,8 @@ func TestCheckReceiverProfilesViews(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(internal.ReceiverKey, receiverID.String()),
-					attribute.String(internal.TransportKey, transport)),
+					attribute.String(internal.TransportKey, transport),
+				),
 				Value: int64(0),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())

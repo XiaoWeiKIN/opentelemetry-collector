@@ -5,10 +5,13 @@ package builder
 
 import (
 	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/knadh/koanf/parsers/yaml"
+	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -170,9 +173,12 @@ func TestInvalidConverter(t *testing.T) {
 	require.Error(t, err, "expected an error when parsing invalid modules")
 }
 
-func TestRelativePath(t *testing.T) {
+func TestAbsoluteReplacePaths(t *testing.T) {
 	// prepare
 	cfg := Config{
+		Distribution: Distribution{
+			UseAbsoluteReplacePaths: true,
+		},
 		Extensions: []Module{{
 			GoMod: "some-module",
 			Path:  "./templates",
@@ -186,7 +192,8 @@ func TestRelativePath(t *testing.T) {
 	// verify
 	cwd, err := os.Getwd()
 	require.NoError(t, err)
-	assert.True(t, strings.HasPrefix(cfg.Extensions[0].Path, cwd))
+	normalizedCwd := filepath.ToSlash(cwd)
+	assert.True(t, strings.HasPrefix(cfg.Extensions[0].Path, normalizedCwd), "expected path %q to have prefix %q", cfg.Extensions[0].Path, normalizedCwd)
 }
 
 func TestModuleFromCore(t *testing.T) {
@@ -369,6 +376,138 @@ func TestBuildTagConfig(t *testing.T) {
 	assert.Equal(t, "customTag", cfg.Distribution.BuildTags)
 }
 
+// wantOmitTags returns the expected comma-joined omit_detector_<name> tags for every
+// knownResourceDetectors entry not present in keep, preserving knownResourceDetectors order.
+func wantOmitTags(keep ...string) string {
+	keepSet := make(map[string]struct{}, len(keep))
+	for _, k := range keep {
+		keepSet[k] = struct{}{}
+	}
+	var tags []string
+	for _, name := range knownResourceDetectors {
+		if _, ok := keepSet[name]; !ok {
+			tags = append(tags, omitDetectorBuildTag+name)
+		}
+	}
+	return strings.Join(tags, ",")
+}
+
+func TestDistributionBuildTags(t *testing.T) {
+	tests := []struct {
+		name string
+		dist Distribution
+		want string
+	}{
+		{
+			name: "no build tags or detectors",
+			dist: Distribution{},
+			want: "",
+		},
+		{
+			name: "build tags only, no detectors configured leaves all detectors in",
+			dist: Distribution{BuildTags: "customTag"},
+			want: "customTag",
+		},
+		{
+			name: "detectors configured omits every other known detector",
+			dist: Distribution{
+				Resource: Resource{
+					Detection: ResourceDetection{
+						Detectors: []ResourceDetector{
+							{"system": nil},
+							{"env": nil},
+						},
+					},
+				},
+			},
+			want: wantOmitTags("system", "env"),
+		},
+		{
+			name: "build tags and detectors combined",
+			dist: Distribution{
+				BuildTags: "customTag",
+				Resource: Resource{
+					Detection: ResourceDetection{
+						Detectors: []ResourceDetector{
+							{"gcp": nil},
+						},
+					},
+				},
+			},
+			want: "customTag," + wantOmitTags("gcp"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.dist.buildTags())
+		})
+	}
+}
+
+func TestValidateResourceDetectors(t *testing.T) {
+	tests := []struct {
+		name      string
+		detectors []ResourceDetector
+		wantErr   error
+	}{
+		{
+			name:      "no detectors configured",
+			detectors: nil,
+			wantErr:   nil,
+		},
+		{
+			name:      "known detectors",
+			detectors: []ResourceDetector{{"env": nil}, {"gcp": nil}},
+			wantErr:   nil,
+		},
+		{
+			name:      "unknown detector",
+			detectors: []ResourceDetector{{"not_a_real_detector": nil}},
+			wantErr:   errUnknownResourceDetector,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := Config{
+				Logger: zap.NewNop(),
+				Distribution: Distribution{
+					Resource: Resource{Detection: ResourceDetection{Detectors: tt.detectors}},
+				},
+			}
+			if tt.wantErr == nil {
+				assert.NoError(t, cfg.Validate())
+			} else {
+				assert.ErrorIs(t, cfg.Validate(), tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestResourceDetectorsUnmarshal(t *testing.T) {
+	cfgFile := filepath.Join(t.TempDir(), "builder-config.yaml")
+	require.NoError(t, os.WriteFile(cfgFile, []byte(`
+dist:
+  name: test
+  resource:
+    detection:
+      detectors:
+        - env:
+        - system:
+`), 0o600))
+
+	k := koanf.New(".")
+	require.NoError(t, k.Load(file.Provider(cfgFile), yaml.Parser()))
+
+	cfg := Config{Logger: zap.NewNop()}
+	require.NoError(t, k.UnmarshalWithConf("", &cfg, koanf.UnmarshalConf{Tag: "mapstructure"}))
+
+	require.Len(t, cfg.Distribution.Resource.Detection.Detectors, 2)
+	require.NoError(t, cfg.Validate())
+	assert.Equal(t, wantOmitTags("env", "system"), cfg.Distribution.buildTags())
+}
+
 func TestDebugOptionSetConfig(t *testing.T) {
 	cfg := Config{
 		Distribution: Distribution{
@@ -394,4 +533,232 @@ func TestSkipsNilFieldValidation(t *testing.T) {
 	cfg.ConfmapProviders = nil
 	cfg.ConfmapConverters = nil
 	assert.NoError(t, cfg.Validate())
+}
+
+func TestParseModulesDefaultRelativePath(t *testing.T) {
+	cfg := Config{
+		Distribution: Distribution{
+			OutputPath: "./output",
+		},
+		Extensions: []Module{{
+			GoMod: "some-module",
+			Path:  "./templates",
+		}},
+	}
+
+	err := cfg.ParseModules()
+	require.NoError(t, err)
+
+	assert.Equal(t, "../templates", cfg.Extensions[0].Path)
+}
+
+func TestParseModulesAbsoluteReplacePathsFlag(t *testing.T) {
+	cfg := Config{
+		Distribution: Distribution{
+			OutputPath:              "./output",
+			UseAbsoluteReplacePaths: true,
+		},
+		Extensions: []Module{{
+			GoMod: "some-module",
+			Path:  "./templates",
+		}},
+	}
+
+	err := cfg.ParseModules()
+	require.NoError(t, err)
+
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	expectedPath := filepath.ToSlash(filepath.Join(cwd, "templates"))
+	assert.Equal(t, expectedPath, cfg.Extensions[0].Path)
+}
+
+func TestIsEmpty(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		value any
+		want  bool
+	}{
+		{"nil", nil, true},
+		{"empty map", map[string]any{}, true},
+		{"non-empty map", map[string]any{"k": "v"}, false},
+		{"nil slice", []string(nil), true},
+		{"empty slice", []string{}, true},
+		{"non-empty slice", []string{"a"}, false},
+		{"empty string", "", true},
+		{"non-empty string", "x", false},
+		{"false", false, true},
+		{"true", true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isEmpty(tt.value))
+		})
+	}
+}
+
+func TestEncodeValue(t *testing.T) {
+	type inner struct {
+		Name string `mapstructure:"name"`
+	}
+
+	t.Run("struct", func(t *testing.T) {
+		result := encodeValue(reflect.ValueOf(inner{Name: "foo"}))
+		assert.Equal(t, map[string]any{"name": "foo"}, result)
+	})
+
+	t.Run("nil pointer", func(t *testing.T) {
+		result := encodeValue(reflect.ValueOf((*inner)(nil)))
+		assert.Nil(t, result)
+	})
+
+	t.Run("pointer to struct", func(t *testing.T) {
+		result := encodeValue(reflect.ValueOf(&inner{Name: "foo"}))
+		assert.Equal(t, map[string]any{"name": "foo"}, result)
+	})
+
+	t.Run("nil slice", func(t *testing.T) {
+		result := encodeValue(reflect.ValueOf([]inner(nil)))
+		assert.Nil(t, result)
+	})
+
+	t.Run("empty non-nil slice", func(t *testing.T) {
+		result := encodeValue(reflect.ValueOf([]inner{}))
+		assert.Equal(t, []any{}, result)
+	})
+
+	t.Run("slice of structs", func(t *testing.T) {
+		result := encodeValue(reflect.ValueOf([]inner{{Name: "foo"}, {Name: "bar"}}))
+		assert.Equal(t, []any{
+			map[string]any{"name": "foo"},
+			map[string]any{"name": "bar"},
+		}, result)
+	})
+
+	t.Run("string", func(t *testing.T) {
+		assert.Equal(t, "hello", encodeValue(reflect.ValueOf("hello")))
+	})
+
+	t.Run("bool", func(t *testing.T) {
+		assert.Equal(t, true, encodeValue(reflect.ValueOf(true)))
+	})
+}
+
+func TestStructToMap(t *testing.T) {
+	type nested struct {
+		Value string `mapstructure:"value,omitempty"`
+	}
+	type testStruct struct {
+		NoTag   string
+		Skip    string   `mapstructure:"-"`
+		Present string   `mapstructure:"present"`
+		Zero    string   `mapstructure:"zero"`
+		Omit    string   `mapstructure:"omit,omitempty"`
+		Nested  nested   `mapstructure:"nested,omitempty"`
+		List    []string `mapstructure:"list,omitempty"`
+	}
+
+	t.Run("unexported fields are skipped", func(t *testing.T) {
+		type withUnexported struct {
+			exported   string `mapstructure:"exported"`
+			unexported string `mapstructure:"unexported"`
+		}
+		m := structToMap(withUnexported{exported: "x", unexported: "y"})
+		assert.NotContains(t, m, "exported")
+		assert.NotContains(t, m, "unexported")
+	})
+
+	t.Run("field with no tag is skipped", func(t *testing.T) {
+		m := structToMap(testStruct{NoTag: "x"})
+		assert.NotContains(t, m, "NoTag")
+	})
+
+	t.Run("field with dash tag is skipped", func(t *testing.T) {
+		m := structToMap(testStruct{Skip: "x"})
+		assert.NotContains(t, m, "-")
+		assert.NotContains(t, m, "Skip")
+	})
+
+	t.Run("regular field is included", func(t *testing.T) {
+		m := structToMap(testStruct{Present: "hello"})
+		assert.Equal(t, "hello", m["present"])
+	})
+
+	t.Run("field without omitempty is included when zero", func(t *testing.T) {
+		m := structToMap(testStruct{})
+		assert.Contains(t, m, "zero")
+		assert.Empty(t, m["zero"])
+	})
+
+	t.Run("omitempty zero value is omitted", func(t *testing.T) {
+		m := structToMap(testStruct{})
+		assert.NotContains(t, m, "omit")
+	})
+
+	t.Run("omitempty non-zero value is included", func(t *testing.T) {
+		m := structToMap(testStruct{Omit: "x"})
+		assert.Equal(t, "x", m["omit"])
+	})
+
+	t.Run("omitempty empty nested struct is omitted", func(t *testing.T) {
+		m := structToMap(testStruct{})
+		assert.NotContains(t, m, "nested")
+	})
+
+	t.Run("omitempty non-empty nested struct is included", func(t *testing.T) {
+		m := structToMap(testStruct{Nested: nested{Value: "x"}})
+		require.Contains(t, m, "nested")
+		assert.Equal(t, "x", m["nested"].(map[string]any)["value"])
+	})
+
+	t.Run("omitempty empty slice is omitted", func(t *testing.T) {
+		m := structToMap(testStruct{})
+		assert.NotContains(t, m, "list")
+	})
+
+	t.Run("omitempty non-empty slice is included", func(t *testing.T) {
+		m := structToMap(testStruct{List: []string{"a", "b"}})
+		assert.Equal(t, []any{"a", "b"}, m["list"])
+	})
+}
+
+func TestMarshalYAML(t *testing.T) {
+	cfg := Config{
+		Distribution: Distribution{
+			Name:        "myCollector",
+			Description: "Custom OpenTelemetry Collector",
+			OutputPath:  "./build/collector",
+		},
+		Exporters: []Module{
+			{GoMod: "go.opentelemetry.io/collector/exporter/otlpexporter " + DefaultBetaOtelColVersion},
+		},
+		Receivers: []Module{
+			{GoMod: "go.opentelemetry.io/collector/receiver/otlpreceiver " + DefaultBetaOtelColVersion},
+		},
+	}
+
+	out, err := cfg.MarshalYAML()
+	require.NoError(t, err)
+
+	m, ok := out.(map[string]any)
+	require.True(t, ok)
+
+	dist, ok := m["dist"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "myCollector", dist["name"])
+	assert.Equal(t, "Custom OpenTelemetry Collector", dist["description"])
+	assert.Equal(t, "./build/collector", dist["output_path"])
+
+	assert.Contains(t, m, "exporters")
+	assert.Contains(t, m, "receivers")
+
+	assert.NotContains(t, m, "Logger")
+	assert.NotContains(t, m, "extensions")
+	assert.NotContains(t, m, "processors")
+	assert.NotContains(t, m, "connectors")
+	assert.NotContains(t, m, "providers")
+	assert.NotContains(t, m, "converters")
+	assert.NotContains(t, m, "replaces")
+	assert.NotContains(t, m, "excludes")
+	assert.NotContains(t, m, "conf_resolver")
+	assert.NotContains(t, m, "telemetry")
 }

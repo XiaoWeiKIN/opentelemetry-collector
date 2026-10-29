@@ -8,6 +8,8 @@ import (
 	"net"
 	"path/filepath"
 	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -397,7 +399,7 @@ func TestSendTraces(t *testing.T) {
 	assert.Contains(t, observed.FilterLevelExact(zap.WarnLevel).All()[0].Message, "Partial success")
 }
 
-func TestSendTracesWhenEndpointHasHttpScheme(t *testing.T) {
+func TestSendTracesWhenEndpointHasHTTPScheme(t *testing.T) {
 	tests := []struct {
 		name               string
 		useTLS             bool
@@ -902,6 +904,10 @@ func TestSendProfiles(t *testing.T) {
 	logger, observed := observer.New(zap.DebugLevel)
 	set.Logger = zap.New(logger)
 
+	// A configured version must not override the schema used by the exporter.
+	version, err := strconv.Atoi(pprofileotlp.DevelopmentVersion)
+	require.NoError(t, err)
+	cfg.ClientConfig.Headers.Set("OTLP-Profiles-Development-Version", configopaque.String(strconv.Itoa(version+1)))
 	exp, err := factory.(xexporter.Factory).CreateProfiles(context.Background(), set, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, exp)
@@ -941,15 +947,18 @@ func TestSendProfiles(t *testing.T) {
 
 	expectedHeader := []string{"header-value"}
 
-	// Verify received span.
+	// Verify received profiles. The gRPC transport may extend the profiles
+	// dictionary while interning resource and scope attribute strings.
 	assert.EqualValues(t, 2, rcv.totalItems.Load())
 	assert.EqualValues(t, 2, rcv.requestCount.Load())
-	assert.Equal(t, td, rcv.getLastRequest())
+	assert.Equal(t, td.ResourceProfiles(), rcv.getLastRequest().ResourceProfiles())
 
 	md := rcv.getMetadata()
 	require.Equal(t, expectedHeader, md.Get("header"))
 	require.Len(t, md.Get("User-Agent"), 1)
 	require.Contains(t, md.Get("User-Agent")[0], "Collector/1.2.3test")
+
+	require.Equal(t, []string{pprofileotlp.DevelopmentVersion}, md.Get(pprofileotlp.DevelopmentVersionHeader))
 
 	// Return partial success
 	rcv.setExportResponse(func() pprofileotlp.ExportResponse {
@@ -970,7 +979,47 @@ func TestSendProfiles(t *testing.T) {
 	assert.Contains(t, observed.FilterLevelExact(zap.WarnLevel).All()[0].Message, "Partial success")
 }
 
-func TestSendProfilesWhenEndpointHasHttpScheme(t *testing.T) {
+func TestPushTracesBeforeStart(t *testing.T) {
+	factory := NewFactory()
+	cfg := factory.CreateDefaultConfig()
+	set := exportertest.NewNopSettings(factory.Type())
+	exp := newExporter(cfg, set)
+	err := exp.pushTraces(context.Background(), ptrace.NewTraces())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not started")
+}
+
+func TestPushMetricsBeforeStart(t *testing.T) {
+	factory := NewFactory()
+	cfg := factory.CreateDefaultConfig()
+	set := exportertest.NewNopSettings(factory.Type())
+	exp := newExporter(cfg, set)
+	err := exp.pushMetrics(context.Background(), pmetric.NewMetrics())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not started")
+}
+
+func TestPushLogsBeforeStart(t *testing.T) {
+	factory := NewFactory()
+	cfg := factory.CreateDefaultConfig()
+	set := exportertest.NewNopSettings(factory.Type())
+	exp := newExporter(cfg, set)
+	err := exp.pushLogs(context.Background(), plog.NewLogs())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not started")
+}
+
+func TestPushProfilesBeforeStart(t *testing.T) {
+	factory := NewFactory()
+	cfg := factory.CreateDefaultConfig()
+	set := exportertest.NewNopSettings(factory.Type())
+	exp := newExporter(cfg, set)
+	err := exp.pushProfiles(context.Background(), pprofile.NewProfiles())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not started")
+}
+
+func TestSendProfilesWhenEndpointHasHTTPScheme(t *testing.T) {
 	tests := []struct {
 		name               string
 		useTLS             bool
@@ -1041,4 +1090,49 @@ func TestSendProfilesWhenEndpointHasHttpScheme(t *testing.T) {
 			assert.EqualValues(t, 0, rcv.totalItems.Load())
 		})
 	}
+}
+
+func TestUserAgentHeader_OverriddenByConfig(t *testing.T) {
+	// Start an OTLP-compatible receiver.
+	ln, err := net.Listen("tcp", "localhost:")
+	require.NoError(t, err, "Failed to find an available address to run the gRPC server: %v", err)
+	rcv := otlpMetricsReceiverOnGRPCServer(ln)
+	defer rcv.srv.GracefulStop()
+
+	// Start an OTLP exporter with a custom User-Agent header.
+	factory := NewFactory()
+	cfg := factory.CreateDefaultConfig().(*Config)
+	cfg.QueueConfig = configoptional.None[exporterhelper.QueueBatchConfig]()
+	cfg.ClientConfig = configgrpc.ClientConfig{
+		Endpoint: ln.Addr().String(),
+		TLS: configtls.ClientConfig{
+			Insecure: true,
+		},
+		UserAgent: "My Distribution For The Collector",
+	}
+	set := exportertest.NewNopSettings(factory.Type())
+	set.BuildInfo.Description = "Collector"
+	set.BuildInfo.Version = "1.2.3test"
+
+	exp, err := factory.CreateMetrics(context.Background(), set, cfg)
+	require.NoError(t, err)
+	require.NotNil(t, exp)
+	defer func() {
+		assert.NoError(t, exp.Shutdown(context.Background()))
+	}()
+
+	require.NoError(t, exp.Start(context.Background(), componenttest.NewNopHost()))
+
+	// Send a metric to trigger an RPC.
+	require.NoError(t, exp.ConsumeMetrics(context.Background(), pmetric.NewMetrics()))
+
+	assert.Eventually(t, func() bool {
+		return rcv.requestCount.Load() > 0
+	}, 10*time.Second, 5*time.Millisecond)
+
+	md := rcv.getMetadata()
+	require.Len(t, md.Get("User-Agent"), 1)
+	// User-configured value must win over the builtin BuildInfo agent.
+	require.True(t, strings.HasPrefix(md.Get("User-Agent")[0], "My Distribution For The Collector"))
+	require.NotContains(t, md.Get("User-Agent")[0], "Collector/1.2.3test")
 }

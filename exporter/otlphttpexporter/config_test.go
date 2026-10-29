@@ -4,7 +4,6 @@
 package otlphttpexporter
 
 import (
-	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,7 +18,6 @@ import (
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/confmap/confmaptest"
-	"go.opentelemetry.io/collector/confmap/xconfmap"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
 )
 
@@ -29,15 +27,10 @@ func TestUnmarshalDefaultConfig(t *testing.T) {
 	require.NoError(t, confmap.New().Unmarshal(&cfg))
 	assert.Equal(t, factory.CreateDefaultConfig(), cfg)
 	// Default/Empty config is invalid.
-	assert.Error(t, xconfmap.Validate(cfg))
+	assert.Error(t, confmap.Validate(cfg))
 }
 
 func TestUnmarshalConfig(t *testing.T) {
-	defaultMaxIdleConns := http.DefaultTransport.(*http.Transport).MaxIdleConns
-	defaultMaxIdleConnsPerHost := http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost
-	defaultMaxConnsPerHost := http.DefaultTransport.(*http.Transport).MaxConnsPerHost
-	defaultIdleConnTimeout := http.DefaultTransport.(*http.Transport).IdleConnTimeout
-
 	cm, err := confmaptest.LoadConf(filepath.Join("testdata", "config.yaml"))
 	require.NoError(t, err)
 	factory := NewFactory()
@@ -57,11 +50,7 @@ func TestUnmarshalConfig(t *testing.T) {
 				Sizer:        exporterhelper.RequestSizerTypeRequests,
 				NumConsumers: 2,
 				QueueSize:    10,
-				Batch: configoptional.Default(exporterhelper.BatchConfig{
-					Sizer:        exporterhelper.RequestSizerTypeItems,
-					FlushTimeout: 200 * time.Millisecond,
-					MinSize:      8192,
-				}),
+				Batch:        configoptional.Default(exporterhelper.NewDefaultBatchConfig()),
 			}),
 			Encoding: EncodingProto,
 			ClientConfig: confighttp.ClientConfig{
@@ -71,6 +60,10 @@ func TestUnmarshalConfig(t *testing.T) {
 					{Name: "header1", Value: "234"},
 				},
 				Endpoint: "https://1.2.3.4:1234",
+				Keepalive: configoptional.Some(confighttp.KeepaliveClientConfig{
+					MaxIdleConns:    100,
+					IdleConnTimeout: 90 * time.Second,
+				}),
 				TLS: configtls.ClientConfig{
 					Config: configtls.Config{
 						CAFile:   "/var/lib/mycert.pem",
@@ -79,15 +72,11 @@ func TestUnmarshalConfig(t *testing.T) {
 					},
 					Insecure: true,
 				},
-				ReadBufferSize:      123,
-				WriteBufferSize:     345,
-				Timeout:             time.Second * 10,
-				Compression:         "gzip",
-				MaxIdleConns:        defaultMaxIdleConns,
-				MaxIdleConnsPerHost: defaultMaxIdleConnsPerHost,
-				MaxConnsPerHost:     defaultMaxConnsPerHost,
-				IdleConnTimeout:     defaultIdleConnTimeout,
-				ForceAttemptHTTP2:   true,
+				ReadBufferSize:    123,
+				WriteBufferSize:   345,
+				Timeout:           time.Second * 10,
+				Compression:       "gzip",
+				ForceAttemptHTTP2: true,
 			},
 			ProfilesEndpoint: "https://custom.profiles.endpoint:8080/v1development/profiles",
 		}, cfg)

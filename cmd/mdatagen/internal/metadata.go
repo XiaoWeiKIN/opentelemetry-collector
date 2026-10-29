@@ -11,14 +11,25 @@ import (
 	"strconv"
 	"strings"
 
+	"go.opentelemetry.io/collector/cmd/mdatagen/internal/cfggen"
+	"go.opentelemetry.io/collector/cmd/mdatagen/internal/helpers"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/filter"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 )
 
+const semConvURL = "https://github.com/open-telemetry/semantic-conventions/blob"
+
+var (
+	featureGateIDRegexp       = regexp.MustCompile(`^[0-9a-zA-Z._]*$`)
+	featureGateIssueURLRegexp = regexp.MustCompile(`^https://github\.com/[^/]+/[^/]+/issues/\d+$`)
+)
+
 type Metadata struct {
 	// Type of the component.
 	Type string `mapstructure:"type"`
+	// DeprecatedType of the component.
+	DeprecatedType string `mapstructure:"deprecated_type"`
 	// DisplayName is a human-readable display name for the component.
 	DisplayName string `mapstructure:"display_name"`
 	// Description is a brief description of the component.
@@ -27,14 +38,16 @@ type Metadata struct {
 	Parent string `mapstructure:"parent"`
 	// Status information for the component.
 	Status *Status `mapstructure:"status"`
-	// Spatial Re-aggregation featuregate.
-	ReaggregationEnabled bool `mapstructure:"reaggregation_enabled"`
+	// Override value featuregate for resource attributes.
+	OverrideValueEnabled bool `mapstructure:"override_value_enabled"`
 	// The name of the package that will be generated.
 	GeneratedPackageName string `mapstructure:"generated_package_name"`
 	// Telemetry information for the component.
 	Telemetry Telemetry `mapstructure:"telemetry"`
 	// SemConvVersion is a version number of OpenTelemetry semantic conventions applied to the scraped metrics.
 	SemConvVersion string `mapstructure:"sem_conv_version"`
+	// SemConvURL is an optional URL to the OpenTelemetry semantic conventions version.
+	SemConvURL string `mapstructure:"sem_conv_url"`
 	// ResourceAttributes that can be emitted by the component.
 	ResourceAttributes map[AttributeName]Attribute `mapstructure:"resource_attributes"`
 	// Entities organizes resource attributes into logical entities.
@@ -51,12 +64,18 @@ type Metadata struct {
 	ScopeName string `mapstructure:"scope_name"`
 	// ShortFolderName is the shortened folder name of the component, removing class if present
 	ShortFolderName string `mapstructure:"-"`
+	// GithubLabel is the GitHub label used for the component's issues
+	GithubLabel string `mapstructure:"-"`
 	// Tests is the set of tests generated with the component
 	Tests Tests `mapstructure:"tests"`
+	// SendingQueue declares the exporter queue/batch sender defaults.
+	SendingQueue *SendingQueue `mapstructure:"sending_queue"`
 	// PackageName is the name of the package where the component is defined.
 	PackageName string `mapstructure:"package_name"`
 	// FeatureGates that are managed by the component.
 	FeatureGates []FeatureGate `mapstructure:"feature_gates"`
+	// Config is the configuration schemas for the component.
+	*cfggen.ConfigsMetadata `mapstructure:",squash"`
 }
 
 type Deprecated struct {
@@ -82,7 +101,7 @@ func (md Metadata) GetCodeCovComponentID() string {
 		return md.Status.CodeCovComponentID
 	}
 
-	return strings.ReplaceAll(md.Status.Class+"_"+md.Type, "/", "_")
+	return strings.ReplaceAll(md.Status.Class+"_"+strings.ReplaceAll(md.Type, "_", ""), "/", "_")
 }
 
 func (md Metadata) HasEntities() bool {
@@ -95,12 +114,8 @@ func (md *Metadata) Validate() error {
 		errs = errors.Join(errs, err)
 	}
 
-	if md.Parent != "" {
-		if md.Status != nil {
-			// status is not required for subcomponents.
-			errs = errors.Join(errs, errors.New("status must be empty for subcomponents"))
-		}
-	} else {
+	// status is optional for subcomponents but required for components.
+	if md.Parent == "" || md.Status != nil {
 		errs = errors.Join(errs, md.Status.Validate())
 	}
 
@@ -116,11 +131,61 @@ func (md *Metadata) Validate() error {
 		errs = errors.Join(errs, err)
 	}
 
+	if err := md.validateMigrations(); err != nil {
+		errs = errors.Join(errs, err)
+	}
+
 	if err := md.validateFeatureGates(); err != nil {
 		errs = errors.Join(errs, err)
 	}
 
+	if err := md.validateConfig(); err != nil {
+		errs = errors.Join(errs, err)
+	}
+
+	if err := md.validateSendingQueue(); err != nil {
+		errs = errors.Join(errs, err)
+	}
+
+	if err := md.validateTests(); err != nil {
+		errs = errors.Join(errs, err)
+	}
+
 	return errs
+}
+
+func (md *Metadata) validateSendingQueue() error {
+	if md.Status == nil || md.Status.Class != "exporter" {
+		if md.SendingQueue != nil {
+			return errors.New("sending_queue is only valid for exporters")
+		}
+		return nil
+	}
+	if md.SendingQueue == nil {
+		if sendingQueueOptOut() {
+			// Phase 2 audit mode: materialize the standard default for every
+			// exporter that hasn't declared sending_queue yet, instead of
+			// skipping generation. See sendingQueueOptOutEnvVar.
+			md.SendingQueue = &SendingQueue{Support: SendingQueueSupportDefault}
+		} else {
+			// Opt-in (default): an undeclared sending_queue means this
+			// exporter has not yet been audited as part of the batching
+			// migration (docs/rfcs/batching-migration.md); skip generation.
+			md.SendingQueue = &SendingQueue{Support: SendingQueueSupportOmitted, implicit: true}
+		}
+	}
+	return md.SendingQueue.Validate()
+}
+
+func (md *Metadata) validateTests() error {
+	isProcessor := md.Status != nil && md.Status.Class == "processor"
+	if md.Tests.SkipContextPropagation && !isProcessor {
+		return errors.New("tests::skip_context_propagation is only supported for processors")
+	}
+	if isProcessor && !md.Tests.SkipContextPropagation && md.Tests.ExpectConsumerError {
+		return errors.New("tests::expect_consumer_error requires tests::skip_context_propagation:true for processors")
+	}
+	return nil
 }
 
 // typeRegexp is used to validate the type of a component.
@@ -158,6 +223,38 @@ func (md *Metadata) validateResourceAttributes() error {
 		}
 		if attr.EnabledPtr == nil {
 			errs = errors.Join(errs, fmt.Errorf("enabled field is required for resource attribute: %v", name))
+		}
+	}
+	return errs
+}
+
+// validateMigrations verifies that any metric-level migration references valid
+// target metrics and existing feature gates.
+func (md *Metadata) validateMigrations() error {
+	var errs error
+	if len(md.Metrics) == 0 {
+		return nil
+	}
+	gates := make(map[FeatureGateID]struct{}, len(md.FeatureGates))
+	for _, g := range md.FeatureGates {
+		gates[g.ID] = struct{}{}
+	}
+	for mn, m := range md.Metrics {
+		if m.Migration == nil {
+			continue
+		}
+		if _, ok := md.Metrics[m.Migration.To]; !ok {
+			errs = errors.Join(errs, fmt.Errorf(`metric "%v": migration.to refers to undefined metric "%v"`, mn, m.Migration.To))
+		}
+		if mn == m.Migration.To {
+			errs = errors.Join(errs, fmt.Errorf(`metric "%v": migration.to must not reference itself "%v"`, mn, m.Migration.To))
+		}
+		// Gates must exist.
+		if _, ok := gates[m.Migration.ThroughGates.DisableOld]; !ok || m.Migration.ThroughGates.DisableOld == "" {
+			errs = errors.Join(errs, fmt.Errorf(`metric "%v": migration.through_gates.disable_old must reference an existing feature gate`, mn))
+		}
+		if _, ok := gates[m.Migration.ThroughGates.EnableNew]; !ok || m.Migration.ThroughGates.EnableNew == "" {
+			errs = errors.Join(errs, fmt.Errorf(`metric "%v": migration.through_gates.enable_new must reference an existing feature gate`, mn))
 		}
 	}
 	return errs
@@ -203,6 +300,11 @@ func (md *Metadata) validateEntities() error {
 				errs = errors.Join(errs, fmt.Errorf(`entity "%v": attribute %v is already used by entity "%v"`, entity.Type, ref.Ref, otherEntity))
 			} else {
 				usedAttrs[ref.Ref] = entity.Type
+			}
+		}
+		for _, ref := range entity.ExtraAttributes {
+			if _, ok := md.ResourceAttributes[ref.Ref]; !ok {
+				errs = errors.Join(errs, fmt.Errorf(`entity "%v": extra_attributes refers to undefined resource attribute: %v`, entity.Type, ref.Ref))
 			}
 		}
 	}
@@ -361,7 +463,11 @@ func validateEvents(events map[EventName]Event, attributes map[AttributeName]Att
 func (md *Metadata) validateFeatureGates() error {
 	var errs error
 	seen := make(map[FeatureGateID]bool)
-	idRegexp := regexp.MustCompile(`^[0-9a-zA-Z.]*$`)
+
+	var componentPrefix string
+	if md.Status != nil && md.Status.Class != "" && md.Type != "" {
+		componentPrefix = md.Status.Class + "." + md.Type + "."
+	}
 
 	// Validate that feature gates are sorted by ID
 	if !slices.IsSortedFunc(md.FeatureGates, func(a, b FeatureGate) int {
@@ -378,8 +484,13 @@ func (md *Metadata) validateFeatureGates() error {
 		}
 
 		// Validate ID follows the allowed character pattern
-		if !idRegexp.MatchString(string(gate.ID)) {
-			errs = errors.Join(errs, fmt.Errorf(`feature gate "%v": ID contains invalid characters, must match ^[0-9a-zA-Z.]*$`, gate.ID))
+		if !featureGateIDRegexp.MatchString(string(gate.ID)) {
+			errs = errors.Join(errs, fmt.Errorf(`feature gate "%v": ID contains invalid characters, must match ^[0-9a-zA-Z._]*$`, gate.ID))
+		}
+
+		// Validate ID is prefixed with "<class>.<type>." so gates are namespaced to their component.
+		if !gate.SkipStrictValidation && componentPrefix != "" && !strings.HasPrefix(string(gate.ID), componentPrefix) {
+			errs = errors.Join(errs, fmt.Errorf(`feature gate "%v": ID must be prefixed with %q`, gate.ID, componentPrefix))
 		}
 
 		// Check for duplicate IDs
@@ -397,6 +508,8 @@ func (md *Metadata) validateFeatureGates() error {
 		// Validate that each feature gate has a reference link
 		if gate.ReferenceURL == "" {
 			errs = errors.Join(errs, fmt.Errorf(`feature gate "%v": reference_url is required`, gate.ID))
+		} else if !gate.SkipStrictValidation && !featureGateIssueURLRegexp.MatchString(gate.ReferenceURL) {
+			errs = errors.Join(errs, fmt.Errorf(`feature gate "%v": reference_url %q must be a GitHub issue URL (https://github.com/<owner>/<repo>/issues/<number>)`, gate.ID, gate.ReferenceURL))
 		}
 
 		// Validate stage is one of the allowed values
@@ -424,8 +537,19 @@ func (md *Metadata) validateFeatureGates() error {
 		if (gate.Stage == FeatureGateStageStable || gate.Stage == FeatureGateStageDeprecated) && gate.ToVersion == "" {
 			errs = errors.Join(errs, fmt.Errorf(`feature gate "%v": to_version is required for %v stage gates`, gate.ID, gate.Stage))
 		}
+		// Any gate other than stable/deprecated shouldn't have to_version
+		if gate.Stage != FeatureGateStageStable && gate.Stage != FeatureGateStageDeprecated && gate.ToVersion != "" {
+			errs = errors.Join(errs, fmt.Errorf(`feature gate "%v": to_version is not supported for the %v stage`, gate.ID, gate.Stage))
+		}
 	}
 	return errs
+}
+
+func (md *Metadata) validateConfig() error {
+	if md.ConfigsMetadata != nil {
+		return md.ConfigsMetadata.Validate()
+	}
+	return nil
 }
 
 type AttributeName string
@@ -459,12 +583,19 @@ func (rl AttributeRequirementLevel) String() string {
 	return ""
 }
 
-func (mn AttributeName) Render() (string, error) {
-	return FormatIdentifier(string(mn), true)
+func (an AttributeName) EmittedName() string {
+	if emittedName, _, found := strings.Cut(string(an), "@"); found {
+		return emittedName
+	}
+	return string(an)
 }
 
-func (mn AttributeName) RenderUnexported() (string, error) {
-	return FormatIdentifier(string(mn), false)
+func (an AttributeName) Render() (string, error) {
+	return helpers.FormatIdentifier(string(an), true)
+}
+
+func (an AttributeName) RenderUnexported() (string, error) {
+	return helpers.FormatIdentifier(string(an), false)
 }
 
 // ValueType defines an attribute value type.
@@ -498,7 +629,8 @@ func (mvt *ValueType) UnmarshalText(text []byte) error {
 
 // String returns capitalized name of the ValueType.
 func (mvt ValueType) String() string {
-	return strings.Title(strings.ToLower(mvt.ValueType.String())) //nolint:staticcheck // SA1019
+	valueType := strings.ToLower(mvt.ValueType.String())
+	return strings.ToUpper(valueType[:1]) + valueType[1:]
 }
 
 // Primitive returns name of primitive type for the ValueType.
@@ -559,6 +691,10 @@ type Attribute struct {
 	Warnings Warnings `mapstructure:"warnings"`
 	// RequirementLevel defines the requirement level of the attribute.
 	RequirementLevel AttributeRequirementLevel `mapstructure:"requirement_level"`
+	// The semantic convention reference of the attribute.
+	SemanticConvention *SemanticConvention `mapstructure:"semantic_convention"`
+	// Stability is the stability level of the resource attribute.
+	Stability component.StabilityLevel `mapstructure:"stability"`
 }
 
 // IsConditional returns true if the attribute is conditionally required.
@@ -713,6 +849,10 @@ type Entity struct {
 	Identity []EntityAttributeRef `mapstructure:"identity"`
 	// Description contains references to resource attributes that describe the entity.
 	Description []EntityAttributeRef `mapstructure:"description"`
+	// ExtraAttributes contains references to resource attributes that are contextually
+	// relevant to the entity but are not part of its identity or description
+	// (e.g. k8s.namespace.name on a pod entity).
+	ExtraAttributes []EntityAttributeRef `mapstructure:"extra_attributes"`
 	// Relationships defines how this entity relates to other entities (optional).
 	// Relationships should be defined only on one end. It is recommended to define
 	// relationships on entities with lower lifespan (higher churn).
@@ -746,7 +886,8 @@ const (
 
 // FeatureGate represents a feature gate definition in metadata.
 type FeatureGate struct {
-	// ID is the unique identifier for the feature gate.
+	// ID is the unique identifier for the feature gate. Must be prefixed with
+	// "<status.class>.<type>." unless SkipStrictValidation is set.
 	ID FeatureGateID `mapstructure:"id"`
 	// Description of the feature gate.
 	Description string `mapstructure:"description"`
@@ -756,6 +897,62 @@ type FeatureGate struct {
 	FromVersion string `mapstructure:"from_version"`
 	// ToVersion is the version when the feature gate reached stable stage.
 	ToVersion string `mapstructure:"to_version"`
-	// ReferenceURL is the URL with contextual information about the feature gate.
+	// ReferenceURL is contextual information about the feature gate. Must be a
+	// GitHub issue URL (https://github.com/<owner>/<repo>/issues/<number>)
+	// unless SkipStrictValidation is set.
 	ReferenceURL string `mapstructure:"reference_url"`
+	// Deprecated: set the exemption in the central .mdatagen.yaml instead.
+	SkipStrictValidation bool `mapstructure:"skip_strict_validation"`
+}
+
+func (md *Metadata) expandSemConvRefs() error {
+	for k, v := range md.Attributes {
+		if v.SemanticConvention != nil {
+			if strings.HasPrefix(v.SemanticConvention.SemanticConventionRef, "http") {
+				return fmt.Errorf("attribute %q, use relative path for URL, not the full URL", k)
+			}
+			url := fmt.Sprintf(
+				"%s/v%s/docs/registry/attributes/%s",
+				semConvURL,
+				md.SemConvVersion,
+				v.SemanticConvention.SemanticConventionRef,
+			)
+			v.SemanticConvention.SemanticConventionRef = url
+		}
+		md.Attributes[k] = v
+	}
+
+	for k, v := range md.Metrics {
+		if v.SemanticConvention != nil {
+			if strings.HasPrefix(v.SemanticConvention.SemanticConventionRef, "http") {
+				return fmt.Errorf("metric %q, use relative path for URL, not the full URL", k)
+			}
+			url := fmt.Sprintf(
+				"%s/v%s/docs/%s",
+				semConvURL,
+				md.SemConvVersion,
+				v.SemanticConvention.SemanticConventionRef,
+			)
+			v.SemanticConvention.SemanticConventionRef = url
+		}
+		md.Metrics[k] = v
+	}
+
+	for k, v := range md.ResourceAttributes {
+		if v.SemanticConvention != nil {
+			if strings.HasPrefix(v.SemanticConvention.SemanticConventionRef, "http") {
+				return fmt.Errorf("resource attribute %q, use relative path for URL, not the full URL", k)
+			}
+			url := fmt.Sprintf(
+				"%s/v%s/docs/registry/attributes/%s",
+				semConvURL,
+				md.SemConvVersion,
+				v.SemanticConvention.SemanticConventionRef,
+			)
+			v.SemanticConvention.SemanticConventionRef = url
+		}
+		md.ResourceAttributes[k] = v
+	}
+
+	return nil
 }

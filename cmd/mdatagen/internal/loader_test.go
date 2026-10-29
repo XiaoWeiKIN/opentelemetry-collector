@@ -10,14 +10,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"go.opentelemetry.io/collector/cmd/mdatagen/internal/cfggen"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
 )
-
-func boolPtr(b bool) *bool {
-	return &b
-}
 
 func TestTwoPackagesInDirectory(t *testing.T) {
 	contents, err := os.ReadFile("testdata/twopackages.yaml")
@@ -28,7 +25,7 @@ func TestTwoPackagesInDirectory(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "go.mod"), []byte("module twopackages"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "package1.go"), []byte("package package1"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(tempDir, "package2.go"), []byte("package package2"), 0o600))
-	require.NoError(t, os.WriteFile(metadataPath, contents, 0o600))
+	require.NoError(t, os.WriteFile(metadataPath, contents, 0o600)) // #nosec G703
 
 	_, err = LoadMetadata(metadataPath)
 	require.Error(t, err)
@@ -49,9 +46,9 @@ func TestLoadMetadata(t *testing.T) {
 				Type:                 "sample",
 				DisplayName:          "Sample Receiver",
 				Description:          "This receiver is used for testing purposes to check the output of mdatagen.",
-				SemConvVersion:       "1.38.0",
+				SemConvVersion:       "1.40.0",
 				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/samplereceiver",
-				ReaggregationEnabled: true,
+				OverrideValueEnabled: true,
 				Status: &Status{
 					DisableCodeCov: true,
 					Class:          "receiver",
@@ -74,10 +71,68 @@ func TestLoadMetadata(t *testing.T) {
 					Warnings:             []string{"Any additional information that should be brought to the consumer's attention"},
 					UnsupportedPlatforms: []string{"freebsd", "illumos"},
 				},
+				ConfigsMetadata: &cfggen.ConfigsMetadata{
+					Config: &cfggen.ConfigMetadata{
+						Type: "object",
+						Properties: map[string]*cfggen.ConfigMetadata{
+							"metrics_builder_config": {
+								Ref:   "./internal/metadata.metrics_builder_config",
+								Embed: true,
+								GoStruct: cfggen.GoStructConfig{
+									Anonymous:     true,
+									IgnoreDefault: true,
+								},
+							},
+							"endpoint": {
+								Description: "The endpoint to scrape metrics from.",
+								Type:        "string",
+								Default:     "localhost:12345",
+							},
+							"sample_pkg": {
+								Ref: "../samplepkg.sample_config",
+							},
+							"timeout": {
+								Description: "Timeout for scraping metrics.",
+								Type:        "duration",
+								Default:     "10s",
+							},
+							"max_results": {
+								Description: "Maximum number of results to return per scrape.",
+								Type:        "int64",
+								Default:     100,
+							},
+							"api_token": {
+								Description: "API token used to authenticate with the endpoint.",
+								Type:        "opaque_string",
+							},
+							"component_id": {
+								Description: "Component ID used to identify this receiver instance.",
+								Type:        "component_id",
+							},
+							"headers": {
+								Description: "Extra HTTP headers to attach to each request.",
+								Type:        "opaque_map",
+							},
+						},
+						Required: []string{"endpoint"},
+					},
+				},
 				ResourceAttributes: map[AttributeName]Attribute{
+					"host.arch": {
+						Description: "The CPU architecture the host system is running on.",
+						EnabledPtr:  new(false),
+						Type: ValueType{
+							ValueType: pcommon.ValueTypeStr,
+						},
+						FullName:         "host.arch",
+						RequirementLevel: AttributeRequirementLevelRecommended,
+						SemanticConvention: &SemanticConvention{
+							SemanticConventionRef: "https://github.com/open-telemetry/semantic-conventions/blob/v1.40.0/docs/registry/attributes/host.md#host-arch",
+						},
+					},
 					"string.resource.attr": {
 						Description: "Resource attribute with any string value.",
-						EnabledPtr:  boolPtr(true),
+						EnabledPtr:  new(true),
 						Type: ValueType{
 							ValueType: pcommon.ValueTypeStr,
 						},
@@ -86,7 +141,7 @@ func TestLoadMetadata(t *testing.T) {
 					},
 					"string.enum.resource.attr": {
 						Description: "Resource attribute with a known set of string values.",
-						EnabledPtr:  boolPtr(true),
+						EnabledPtr:  new(true),
 						Enum:        []string{"one", "two"},
 						Type: ValueType{
 							ValueType: pcommon.ValueTypeStr,
@@ -96,37 +151,40 @@ func TestLoadMetadata(t *testing.T) {
 					},
 					"optional.resource.attr": {
 						Description: "Explicitly disabled ResourceAttribute.",
-						EnabledPtr:  boolPtr(false),
+						EnabledPtr:  new(false),
 						Type: ValueType{
 							ValueType: pcommon.ValueTypeStr,
 						},
 						FullName:         "optional.resource.attr",
 						RequirementLevel: AttributeRequirementLevelRecommended,
+						Stability:        component.StabilityLevelDevelopment,
 					},
 					"slice.resource.attr": {
 						Description: "Resource attribute with a slice value.",
-						EnabledPtr:  boolPtr(true),
+						EnabledPtr:  new(true),
 						Type: ValueType{
 							ValueType: pcommon.ValueTypeSlice,
 						},
 						FullName:         "slice.resource.attr",
 						RequirementLevel: AttributeRequirementLevelRecommended,
+						Stability:        component.StabilityLevelDevelopment,
 					},
 					"map.resource.attr": {
 						Description: "Resource attribute with a map value.",
-						EnabledPtr:  boolPtr(true),
+						EnabledPtr:  new(true),
 						Type: ValueType{
 							ValueType: pcommon.ValueTypeMap,
 						},
 						FullName:         "map.resource.attr",
 						RequirementLevel: AttributeRequirementLevelRecommended,
+						Stability:        component.StabilityLevelDevelopment,
 					},
 					"string.resource.attr_disable_warning": {
 						Description: "Resource attribute with any string value.",
 						Warnings: Warnings{
 							IfEnabledNotSet: "This resource_attribute will be disabled by default soon.",
 						},
-						EnabledPtr: boolPtr(true),
+						EnabledPtr: new(true),
 						Type: ValueType{
 							ValueType: pcommon.ValueTypeStr,
 						},
@@ -138,7 +196,7 @@ func TestLoadMetadata(t *testing.T) {
 						Warnings: Warnings{
 							IfConfigured: "This resource_attribute is deprecated and will be removed soon.",
 						},
-						EnabledPtr: boolPtr(false),
+						EnabledPtr: new(false),
 						Type: ValueType{
 							ValueType: pcommon.ValueTypeStr,
 						},
@@ -150,16 +208,36 @@ func TestLoadMetadata(t *testing.T) {
 						Warnings: Warnings{
 							IfEnabled: "This resource_attribute is deprecated and will be removed soon.",
 						},
-						EnabledPtr: boolPtr(true),
+						EnabledPtr: new(true),
 						Type: ValueType{
 							ValueType: pcommon.ValueTypeStr,
 						},
 						FullName:         "string.resource.attr_to_be_removed",
 						RequirementLevel: AttributeRequirementLevelRecommended,
 					},
+					"string.resource.disabled_attr_to_be_removed": {
+						Description: "Resource attribute with any string value.",
+						Warnings: Warnings{
+							IfEnabled: "This resource_attribute is deprecated and will be removed soon.",
+						},
+						EnabledPtr: new(false),
+						Type: ValueType{
+							ValueType: pcommon.ValueTypeStr,
+						},
+						FullName:         "string.resource.disabled_attr_to_be_removed",
+						RequirementLevel: AttributeRequirementLevelRecommended,
+					},
 				},
 
 				Attributes: map[AttributeName]Attribute{
+					"cpu": {
+						Description: "Logical CPU number starting at 0.",
+						Type: ValueType{
+							ValueType: pcommon.ValueTypeStr,
+						},
+						FullName:         "cpu",
+						RequirementLevel: AttributeRequirementLevelRecommended,
+					},
 					"enum_attr": {
 						Description:  "Attribute with a known set of string values.",
 						NameOverride: "",
@@ -252,6 +330,18 @@ func TestLoadMetadata(t *testing.T) {
 						FullName:         "required_string_attr",
 						RequirementLevel: AttributeRequirementLevelRequired,
 					},
+					"state": {
+						Description: "Breakdown of memory usage by type.",
+						Enum:        []string{"buffered", "cached", "inactive", "free", "slab_reclaimable", "slab_unreclaimable", "used"},
+						Type: ValueType{
+							ValueType: pcommon.ValueTypeStr,
+						},
+						FullName:         "state",
+						RequirementLevel: AttributeRequirementLevelRecommended,
+						SemanticConvention: &SemanticConvention{
+							SemanticConventionRef: "https://github.com/open-telemetry/semantic-conventions/blob/v1.40.0/docs/registry/attributes/system.md#system-memory-state",
+						},
+					},
 				},
 				Metrics: map[MetricName]Metric{
 					"default.metric": {
@@ -265,7 +355,7 @@ func TestLoadMetadata(t *testing.T) {
 							},
 							Attributes: []AttributeName{"string_attr", "overridden_int_attr", "enum_attr", "slice_attr", "map_attr", "conditional_int_attr", "conditional_string_attr", "opt_in_bool_attr"},
 						},
-						Unit: strPtr("s"),
+						Unit: new("s"),
 						Sum: &Sum{
 							MetricValueType:        MetricValueType{pmetric.NumberDataPointValueTypeInt},
 							AggregationTemporality: AggregationTemporality{Aggregation: pmetric.AggregationTemporalityCumulative},
@@ -283,7 +373,7 @@ func TestLoadMetadata(t *testing.T) {
 							Stability:   component.StabilityLevelBeta,
 							Attributes:  []AttributeName{"string_attr", "boolean_attr"},
 						},
-						Unit: strPtr("1"),
+						Unit: new("1"),
 						Gauge: &Gauge{
 							MetricValueType: MetricValueType{pmetric.NumberDataPointValueTypeDouble},
 						},
@@ -295,7 +385,7 @@ func TestLoadMetadata(t *testing.T) {
 							Stability:   component.StabilityLevelBeta,
 							Attributes:  []AttributeName{"required_string_attr", "string_attr", "boolean_attr"},
 						},
-						Unit: strPtr("1"),
+						Unit: new("1"),
 						Gauge: &Gauge{
 							MetricValueType: MetricValueType{pmetric.NumberDataPointValueTypeDouble},
 						},
@@ -304,15 +394,30 @@ func TestLoadMetadata(t *testing.T) {
 						Signal: Signal{
 							Enabled:               true,
 							Stability:             component.StabilityLevelBeta,
-							SemanticConvention:    &SemanticConvention{SemanticConventionRef: "https://github.com/open-telemetry/semantic-conventions/blob/v1.38.0/docs/system/system-metrics.md#metric-systemcputime"},
+							SemanticConvention:    &SemanticConvention{SemanticConventionRef: "https://github.com/open-telemetry/semantic-conventions/blob/v1.40.0/docs/system/system-metrics.md#metric-systemcputime"},
 							Description:           "Monotonic cumulative sum int metric enabled by default.",
 							ExtendedDocumentation: "The metric will be become optional soon.",
+							Attributes:            []AttributeName{"cpu"},
 						},
-						Unit: strPtr("s"),
+						Unit: new("s"),
 						Sum: &Sum{
 							MetricValueType:        MetricValueType{pmetric.NumberDataPointValueTypeInt},
 							AggregationTemporality: AggregationTemporality{Aggregation: pmetric.AggregationTemporalityCumulative},
 							Mono:                   Mono{Monotonic: true},
+						},
+					},
+					"system.memory.usage": {
+						Signal: Signal{
+							Enabled:     true,
+							Stability:   component.StabilityLevelDevelopment,
+							Description: "Bytes of memory in use.",
+							Attributes:  []AttributeName{"state"},
+						},
+						Unit: new("By"),
+						Sum: &Sum{
+							MetricValueType:        MetricValueType{pmetric.NumberDataPointValueTypeInt},
+							AggregationTemporality: AggregationTemporality{Aggregation: pmetric.AggregationTemporalityCumulative},
+							Mono:                   Mono{Monotonic: false},
 						},
 					},
 					"optional.metric": {
@@ -329,7 +434,7 @@ func TestLoadMetadata(t *testing.T) {
 							Since: "1.0.0",
 							Note:  "This metric will be removed",
 						},
-						Unit: strPtr("1"),
+						Unit: new("1"),
 						Gauge: &Gauge{
 							MetricValueType: MetricValueType{pmetric.NumberDataPointValueTypeDouble},
 						},
@@ -348,7 +453,7 @@ func TestLoadMetadata(t *testing.T) {
 							Since: "1.0.0",
 							Note:  "This metric will be removed",
 						},
-						Unit: strPtr(""),
+						Unit: new(""),
 						Gauge: &Gauge{
 							MetricValueType: MetricValueType{pmetric.NumberDataPointValueTypeDouble},
 						},
@@ -357,8 +462,8 @@ func TestLoadMetadata(t *testing.T) {
 					"default.metric.to_be_removed": {
 						Signal: Signal{
 							Enabled:               true,
-							Description:           "[DEPRECATED] Non-monotonic delta sum double metric enabled by default.",
-							ExtendedDocumentation: "The metric will be removed soon.",
+							Description:           "[DEPRECATED] Non-monotonic delta sum double metric enabled by default.\n",
+							ExtendedDocumentation: "The metric will be removed soon.\n",
 							Stability:             component.StabilityLevelDeprecated,
 							Warnings: Warnings{
 								IfEnabled: "This metric is deprecated and will be removed soon.",
@@ -368,7 +473,7 @@ func TestLoadMetadata(t *testing.T) {
 							Since: "1.0.0",
 							Note:  "This metric will be removed",
 						},
-						Unit: strPtr("s"),
+						Unit: new("s"),
 						Sum: &Sum{
 							MetricValueType:        MetricValueType{pmetric.NumberDataPointValueTypeDouble},
 							AggregationTemporality: AggregationTemporality{Aggregation: pmetric.AggregationTemporalityDelta},
@@ -382,7 +487,7 @@ func TestLoadMetadata(t *testing.T) {
 							Stability:   component.StabilityLevelDevelopment,
 							Attributes:  []AttributeName{"string_attr", "overridden_int_attr", "enum_attr", "slice_attr", "map_attr"},
 						},
-						Unit: strPtr("s"),
+						Unit: new("s"),
 						Sum: &Sum{
 							MetricValueType:        MetricValueType{pmetric.NumberDataPointValueTypeInt},
 							MetricInputType:        MetricInputType{InputType: "string"},
@@ -405,8 +510,8 @@ func TestLoadMetadata(t *testing.T) {
 					"default.event.to_be_renamed": {
 						Signal: Signal{
 							Enabled:               false,
-							Description:           "[DEPRECATED] Example event disabled by default.",
-							ExtendedDocumentation: "The event will be renamed soon.",
+							Description:           "[DEPRECATED] Example event disabled by default.\n",
+							ExtendedDocumentation: "The event will be renamed soon.\n",
 							Warnings: Warnings{
 								IfConfigured: "This event is deprecated and will be renamed soon.",
 							},
@@ -437,7 +542,7 @@ func TestLoadMetadata(t *testing.T) {
 								Since: "1.5.0",
 								Note:  "This metric will be removed in favor of batch_send_trigger_size",
 							},
-							Unit: strPtr("{times}"),
+							Unit: new("{time}"),
 							Sum: &Sum{
 								MetricValueType: MetricValueType{pmetric.NumberDataPointValueTypeInt},
 								Mono:            Mono{Monotonic: true},
@@ -449,7 +554,7 @@ func TestLoadMetadata(t *testing.T) {
 								Stability:   component.StabilityLevelAlpha,
 								Description: "Duration of request",
 							},
-							Unit: strPtr("s"),
+							Unit: new("s"),
 							Histogram: &Histogram{
 								MetricValueType: MetricValueType{pmetric.NumberDataPointValueTypeDouble},
 								Boundaries:      []float64{1, 10, 100},
@@ -461,7 +566,7 @@ func TestLoadMetadata(t *testing.T) {
 								Stability:   component.StabilityLevelStable,
 								Description: "Cumulative bytes allocated for heap objects (see 'go doc runtime.MemStats.TotalAlloc')",
 							},
-							Unit: strPtr("By"),
+							Unit: new("By"),
 							Sum: &Sum{
 								Mono: Mono{true},
 								MetricValueType: MetricValueType{
@@ -477,7 +582,7 @@ func TestLoadMetadata(t *testing.T) {
 								Description:           "This metric is optional and therefore not initialized in NewTelemetryBuilder.",
 								ExtendedDocumentation: "For example this metric only exists if feature A is enabled.",
 							},
-							Unit:     strPtr("{items}"),
+							Unit:     new("{item}"),
 							Optional: true,
 							Gauge: &Gauge{
 								MetricValueType: MetricValueType{
@@ -492,7 +597,7 @@ func TestLoadMetadata(t *testing.T) {
 								Description: "Queue capacity - sync gauge example.",
 								Stability:   component.StabilityLevelDevelopment,
 							},
-							Unit: strPtr("{items}"),
+							Unit: new("{item}"),
 							Gauge: &Gauge{
 								MetricValueType: MetricValueType{
 									ValueType: pmetric.NumberDataPointValueTypeInt,
@@ -503,6 +608,7 @@ func TestLoadMetadata(t *testing.T) {
 				},
 				ScopeName:       "go.opentelemetry.io/collector/internal/receiver/samplereceiver",
 				ShortFolderName: "sample",
+				GithubLabel:     "receiver/sample",
 				Tests:           Tests{Host: "newMdatagenNopHost()"},
 				FeatureGates: []FeatureGate{
 					{
@@ -525,6 +631,7 @@ func TestLoadMetadata(t *testing.T) {
 				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				ShortFolderName:      "testdata",
 				Tests:                Tests{Host: "newMdatagenNopHost()"},
+				ConfigsMetadata:      &cfggen.ConfigsMetadata{},
 			},
 		},
 		{
@@ -535,6 +642,7 @@ func TestLoadMetadata(t *testing.T) {
 				ScopeName:            "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				ShortFolderName:      "testdata",
+				GithubLabel:          "receiver/testdata",
 				Tests:                Tests{Host: "newMdatagenNopHost()"},
 				Status: &Status{
 					Class: "receiver",
@@ -544,6 +652,7 @@ func TestLoadMetadata(t *testing.T) {
 						component.StabilityLevelStable:      {"metrics"},
 					},
 				},
+				ConfigsMetadata: &cfggen.ConfigsMetadata{},
 			},
 		},
 		{
@@ -554,6 +663,7 @@ func TestLoadMetadata(t *testing.T) {
 				ScopeName:            "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				ShortFolderName:      "testdata",
+				GithubLabel:          "receiver/testdata",
 				Tests:                Tests{Host: "newMdatagenNopHost()"},
 				Status: &Status{
 					Class: "receiver",
@@ -561,6 +671,26 @@ func TestLoadMetadata(t *testing.T) {
 						component.StabilityLevelBeta: {"logs"},
 					},
 				},
+				ConfigsMetadata: &cfggen.ConfigsMetadata{},
+			},
+		},
+		{
+			name: "testdata/reaggregation_disabled.yaml",
+			want: Metadata{
+				Type:                 "test",
+				GeneratedPackageName: "metadata",
+				ScopeName:            "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
+				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
+				ShortFolderName:      "testdata",
+				GithubLabel:          "receiver/testdata",
+				Tests:                Tests{Host: "newMdatagenNopHost()"},
+				Status: &Status{
+					Class: "receiver",
+					Stability: map[component.StabilityLevel][]string{
+						component.StabilityLevelBeta: {"logs"},
+					},
+				},
+				ConfigsMetadata: &cfggen.ConfigsMetadata{},
 			},
 		},
 		{
@@ -606,7 +736,7 @@ func TestLoadMetadata(t *testing.T) {
 		{
 			name:    "testdata/invalid_metric_semconvref.yaml",
 			want:    Metadata{},
-			wantErr: "metric \"default.metric\": invalid semantic-conventions URL: want https://github.com/open-telemetry/semantic-conventions/blob/v1.37.2/*#metric-defaultmetric, got \"https://github.com/open-telemetry/semantic-conventions/blob/v1.38.0/docs/system/system-metrics.md#metric-systemcputime\"",
+			wantErr: "metric \"default.metric\": invalid semantic-conventions URL: want https://github.com/open-telemetry/semantic-conventions/blob/v1.37.2/*#metric-defaultmetric, got \"https://github.com/open-telemetry/semantic-conventions/blob/v1.37.2/docs/system/system-metrics.md#metric-systemcputime\"",
 		},
 		{
 			name:    "testdata/no_metric_stability.yaml",
@@ -617,6 +747,21 @@ func TestLoadMetadata(t *testing.T) {
 			name:    "testdata/undeprecated_with_deprecation.yaml",
 			want:    Metadata{},
 			wantErr: "`stability` must be `deprecated` when specifying a `deprecated` field",
+		},
+		{
+			name:    "testdata/invalid_config.yaml",
+			want:    Metadata{},
+			wantErr: "config type must be \"object\", got \"string\"",
+		},
+		{
+			name:    "testdata/invalid_metric_semconv_url_full.yaml",
+			want:    Metadata{},
+			wantErr: "metric \"default.metric\", use relative path for URL, not the full URL",
+		},
+		{
+			name:    "testdata/invalid_attribute_semconv_url_full.yaml",
+			want:    Metadata{},
+			wantErr: "attribute \"used_attr\", use relative path for URL, not the full URL",
 		},
 		{
 			name:    "testdata/~~this file doesn't exist~~.yaml",
@@ -631,6 +776,7 @@ func TestLoadMetadata(t *testing.T) {
 				ScopeName:            "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				ShortFolderName:      "testdata",
+				GithubLabel:          "receiver/testdata",
 				Tests:                Tests{Host: "newMdatagenNopHost()"},
 				Status: &Status{
 					Class: "receiver",
@@ -638,6 +784,7 @@ func TestLoadMetadata(t *testing.T) {
 						component.StabilityLevelBeta: {"logs"},
 					},
 				},
+				ConfigsMetadata: &cfggen.ConfigsMetadata{},
 			},
 		},
 		{
@@ -649,6 +796,7 @@ func TestLoadMetadata(t *testing.T) {
 				ScopeName:            "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				ShortFolderName:      "testdata",
+				GithubLabel:          "receiver/testdata",
 				Tests:                Tests{Host: "newMdatagenNopHost()"},
 				Status: &Status{
 					Class: "receiver",
@@ -656,6 +804,7 @@ func TestLoadMetadata(t *testing.T) {
 						component.StabilityLevelBeta: {"logs"},
 					},
 				},
+				ConfigsMetadata: &cfggen.ConfigsMetadata{},
 			},
 		},
 		{
@@ -668,6 +817,7 @@ func TestLoadMetadata(t *testing.T) {
 				ScopeName:            "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				ShortFolderName:      "testdata",
+				GithubLabel:          "receiver/testdata",
 				Tests:                Tests{Host: "newMdatagenNopHost()"},
 				Status: &Status{
 					Class: "receiver",
@@ -675,6 +825,28 @@ func TestLoadMetadata(t *testing.T) {
 						component.StabilityLevelBeta: {"logs"},
 					},
 				},
+				ConfigsMetadata: &cfggen.ConfigsMetadata{},
+			},
+		},
+		{
+			name: "testdata/with_pipe_description.yaml",
+			want: Metadata{
+				Type:                 "testdesc",
+				DisplayName:          "Test Component",
+				Description:          "This is a test component with a multiline description.\nIt has a second line.\n",
+				GeneratedPackageName: "metadata",
+				ScopeName:            "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
+				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
+				ShortFolderName:      "testdata",
+				GithubLabel:          "receiver/testdata",
+				Tests:                Tests{Host: "newMdatagenNopHost()"},
+				Status: &Status{
+					Class: "receiver",
+					Stability: map[component.StabilityLevel][]string{
+						component.StabilityLevelBeta: {"logs"},
+					},
+				},
+				ConfigsMetadata: &cfggen.ConfigsMetadata{},
 			},
 		},
 		{
@@ -682,10 +854,11 @@ func TestLoadMetadata(t *testing.T) {
 			want: Metadata{
 				Type:                 "metricreceiver",
 				GeneratedPackageName: "metadata",
-				SemConvVersion:       "1.38.0",
+				SemConvVersion:       "1.40.0",
 				ScopeName:            "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				PackageName:          "go.opentelemetry.io/collector/cmd/mdatagen/internal/testdata",
 				ShortFolderName:      "testdata",
+				GithubLabel:          "receiver/testdata",
 				Tests:                Tests{Host: "newMdatagenNopHost()"},
 				Status: &Status{
 					Class: "receiver",
@@ -704,10 +877,10 @@ func TestLoadMetadata(t *testing.T) {
 							Description: "Time disk spent activated..",
 							Stability:   component.StabilityLevelDevelopment,
 							SemanticConvention: &SemanticConvention{
-								SemanticConventionRef: "https://github.com/open-telemetry/semantic-conventions/blob/v1.38.0/docs/system/system-metrics.md#metric-systemdiskio_time",
+								SemanticConventionRef: "https://github.com/open-telemetry/semantic-conventions/blob/v1.40.0/docs/system/system-metrics.md#metric-systemdiskio_time",
 							},
 						},
-						Unit: strPtr("s"),
+						Unit: new("s"),
 						Sum: &Sum{
 							AggregationTemporality: AggregationTemporality{Aggregation: pmetric.AggregationTemporalityCumulative},
 							Mono:                   Mono{Monotonic: true},
@@ -715,6 +888,7 @@ func TestLoadMetadata(t *testing.T) {
 						},
 					},
 				},
+				ConfigsMetadata: &cfggen.ConfigsMetadata{},
 			},
 		},
 	}
@@ -732,6 +906,100 @@ func TestLoadMetadata(t *testing.T) {
 	}
 }
 
-func strPtr(s string) *string {
-	return &s
+func TestSetMetricDefaultFields(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    map[MetricName]Metric
+		expected map[MetricName]Metric
+	}{
+		{
+			name: "no name set, no slash in key",
+			input: map[MetricName]Metric{
+				"system.cpu.time": {Signal: Signal{Description: "test"}},
+			},
+			expected: map[MetricName]Metric{
+				"system.cpu.time": {Signal: Signal{Description: "test"}},
+			},
+		},
+		{
+			name: "no name set, At ('@') in key",
+			input: map[MetricName]Metric{
+				"system.cpu.time@v2": {Signal: Signal{Description: "test"}},
+			},
+			expected: map[MetricName]Metric{
+				"system.cpu.time@v2": {Signal: Signal{Description: "test"}, Versioned: true},
+			},
+		},
+		{
+			name: "name already set",
+			input: map[MetricName]Metric{
+				"some.key": {Signal: Signal{Description: "test"}},
+			},
+			expected: map[MetricName]Metric{
+				"some.key": {Signal: Signal{Description: "test"}},
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setMetricVersioned(tt.input)
+			require.Equal(t, tt.expected, tt.input)
+		})
+	}
+}
+
+func TestVersionedMetricName(t *testing.T) {
+	md, err := LoadMetadata("testdata/versioned_metric.yaml")
+	require.NoError(t, err)
+
+	// Legacy metric - Name should be empty (uses map key)
+	legacy := md.Metrics["system.cpu.time"]
+	require.False(t, legacy.Versioned)
+
+	// Versioned metric - Name should be auto-populated from key
+	versioned := md.Metrics["system.cpu.time@v1"]
+	require.True(t, versioned.Versioned)
+}
+
+func TestGithubLabel(t *testing.T) {
+	tests := []struct {
+		name         string
+		labelsFile   string
+		componentDir string
+		want         string
+	}{
+		{
+			name:         "no labels file",
+			componentDir: "extension/storage/filestorage",
+			want:         "extension/filestorage",
+		},
+		{
+			name:         "label from labels file",
+			labelsFile:   "# This file is auto-generated. Do not edit manually.\nextension/storage/filestorage extension/storage/filestorage\n",
+			componentDir: "extension/storage/filestorage",
+			want:         "extension/storage/filestorage",
+		},
+		{
+			name:         "component missing from labels file",
+			labelsFile:   "extension/storage/dbstorage extension/storage/dbstorage\n",
+			componentDir: "extension/storage/filestorage",
+			want:         "extension/filestorage",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rootDir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(rootDir, "go.mod"), []byte("module example.com/root\n"), 0o600))
+			if tt.labelsFile != "" {
+				require.NoError(t, os.MkdirAll(filepath.Join(rootDir, ".github"), 0o700))
+				require.NoError(t, os.WriteFile(filepath.Join(rootDir, ".github", "component_labels.txt"), []byte(tt.labelsFile), 0o600))
+			}
+			componentDir := filepath.Join(rootDir, filepath.FromSlash(tt.componentDir))
+			require.NoError(t, os.MkdirAll(componentDir, 0o700))
+
+			got, err := githubLabel(componentDir, "extension", "filestorage")
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
 }

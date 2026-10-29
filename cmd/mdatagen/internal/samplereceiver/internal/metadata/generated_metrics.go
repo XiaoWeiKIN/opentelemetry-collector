@@ -8,12 +8,13 @@ import (
 	"strconv"
 	"time"
 
-	conventions "go.opentelemetry.io/otel/semconv/v1.38.0"
+	conventions "go.opentelemetry.io/otel/semconv/v1.40.0"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/filter"
 	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pmetric"
+	"go.opentelemetry.io/collector/pdata/xpdata/xhash"
 	"go.opentelemetry.io/collector/receiver"
 )
 
@@ -23,6 +24,15 @@ const (
 	AggregationStrategyMin = "min"
 	AggregationStrategyMax = "max"
 )
+
+// dataPointKey hashes dp's attributes and timestamps for O(1) dedup lookup.
+func dataPointKey(dp pmetric.NumberDataPoint) uint64 {
+	return xhash.Hash64(
+		xhash.WithMap(dp.Attributes()),
+		xhash.WithUint64(uint64(dp.StartTimestamp())),
+		xhash.WithUint64(uint64(dp.Timestamp())),
+	)
+}
 
 // AttributeEnumAttr specifies the value enum_attr attribute.
 type AttributeEnumAttr int
@@ -54,30 +64,87 @@ var MapAttributeEnumAttr = map[string]AttributeEnumAttr{
 	"blue":  AttributeEnumAttrBlue,
 }
 
+// AttributeState specifies the value state attribute.
+type AttributeState int
+
+const (
+	_ AttributeState = iota
+	AttributeStateBuffered
+	AttributeStateCached
+	AttributeStateInactive
+	AttributeStateFree
+	AttributeStateSlabReclaimable
+	AttributeStateSlabUnreclaimable
+	AttributeStateUsed
+)
+
+// String returns the string representation of the AttributeState.
+func (av AttributeState) String() string {
+	switch av {
+	case AttributeStateBuffered:
+		return "buffered"
+	case AttributeStateCached:
+		return "cached"
+	case AttributeStateInactive:
+		return "inactive"
+	case AttributeStateFree:
+		return "free"
+	case AttributeStateSlabReclaimable:
+		return "slab_reclaimable"
+	case AttributeStateSlabUnreclaimable:
+		return "slab_unreclaimable"
+	case AttributeStateUsed:
+		return "used"
+	}
+	return ""
+}
+
+// MapAttributeState is a helper map of string to AttributeState attribute value.
+var MapAttributeState = map[string]AttributeState{
+	"buffered":           AttributeStateBuffered,
+	"cached":             AttributeStateCached,
+	"inactive":           AttributeStateInactive,
+	"free":               AttributeStateFree,
+	"slab_reclaimable":   AttributeStateSlabReclaimable,
+	"slab_unreclaimable": AttributeStateSlabUnreclaimable,
+	"used":               AttributeStateUsed,
+}
+
 var MetricsInfo = metricsInfo{
 	DefaultMetric: metricInfo{
-		Name: "default.metric",
+		Name:       "default.metric",
+		Attributes: []string{"string_attr", "overridden_int_attr", "enum_attr", "slice_attr", "map_attr", "conditional_int_attr", "conditional_string_attr", "opt_in_bool_attr"},
 	},
 	DefaultMetricToBeRemoved: metricInfo{
 		Name: "default.metric.to_be_removed",
 	},
 	MetricInputType: metricInfo{
-		Name: "metric.input_type",
+		Name:       "metric.input_type",
+		Attributes: []string{"string_attr", "overridden_int_attr", "enum_attr", "slice_attr", "map_attr"},
 	},
 	OptionalMetric: metricInfo{
-		Name: "optional.metric",
+		Name:       "optional.metric",
+		Attributes: []string{"string_attr", "boolean_attr", "boolean_attr2", "conditional_string_attr"},
 	},
 	OptionalMetricEmptyUnit: metricInfo{
-		Name: "optional.metric.empty_unit",
+		Name:       "optional.metric.empty_unit",
+		Attributes: []string{"string_attr", "boolean_attr"},
 	},
 	ReaggregateMetric: metricInfo{
-		Name: "reaggregate.metric",
+		Name:       "reaggregate.metric",
+		Attributes: []string{"string_attr", "boolean_attr"},
 	},
 	ReaggregateMetricWithRequired: metricInfo{
-		Name: "reaggregate.metric.with_required",
+		Name:       "reaggregate.metric.with_required",
+		Attributes: []string{"required_string_attr", "string_attr", "boolean_attr"},
 	},
 	SystemCPUTime: metricInfo{
-		Name: "system.cpu.time",
+		Name:       "system.cpu.time",
+		Attributes: []string{"cpu"},
+	},
+	SystemMemoryUsage: metricInfo{
+		Name:       "system.memory.usage",
+		Attributes: []string{"state"},
 	},
 }
 
@@ -90,10 +157,12 @@ type metricsInfo struct {
 	ReaggregateMetric             metricInfo
 	ReaggregateMetricWithRequired metricInfo
 	SystemCPUTime                 metricInfo
+	SystemMemoryUsage             metricInfo
 }
 
 type metricInfo struct {
-	Name string
+	Name       string
+	Attributes []string
 }
 
 type MetricAttributeOption interface {
@@ -119,10 +188,11 @@ func WithConditionalStringAttrMetricAttribute(conditionalStringAttrAttributeValu
 }
 
 type metricDefaultMetric struct {
-	data          pmetric.Metric // data buffer for generated metric.
-	config        MetricConfig   // metric config provided by user.
-	capacity      int            // max observed number of data points added to the metric.
-	aggDataPoints []int64        // slice containing number of aggregated datapoints at each index
+	data          pmetric.Metric            // data buffer for generated metric.
+	config        DefaultMetricMetricConfig // metric config provided by user.
+	capacity      int                       // max observed number of data points added to the metric.
+	aggDataPoints []int64                   // slice containing number of aggregated datapoints at each index
+	dpIndex       map[uint64]int            // maps a data point's hash to its index, for O(1) dedup lookup.
 }
 
 // init fills default.metric metric with initial data.
@@ -135,6 +205,7 @@ func (m *metricDefaultMetric) init() {
 	m.data.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
 	m.aggDataPoints = m.aggDataPoints[:0]
+	m.dpIndex = make(map[uint64]int, m.capacity)
 }
 
 func (m *metricDefaultMetric) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, stringAttrAttributeValue string, overriddenIntAttrAttributeValue int64, enumAttrAttributeValue string, sliceAttrAttributeValue []any, mapAttrAttributeValue map[string]any, optInBoolAttrAttributeValue bool, options ...MetricAttributeOption) {
@@ -145,22 +216,22 @@ func (m *metricDefaultMetric) recordDataPoint(start pcommon.Timestamp, ts pcommo
 	dp := pmetric.NewNumberDataPoint()
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
-	if slices.Contains(m.config.EnabledAttributes, "string_attr") {
+	if slices.Contains(m.config.EnabledAttributes, DefaultMetricMetricAttributeKeyStringAttr) {
 		dp.Attributes().PutStr("string_attr", stringAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "state") {
+	if slices.Contains(m.config.EnabledAttributes, DefaultMetricMetricAttributeKeyOverriddenIntAttr) {
 		dp.Attributes().PutInt("state", overriddenIntAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "enum_attr") {
+	if slices.Contains(m.config.EnabledAttributes, DefaultMetricMetricAttributeKeyEnumAttr) {
 		dp.Attributes().PutStr("enum_attr", enumAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "slice_attr") {
+	if slices.Contains(m.config.EnabledAttributes, DefaultMetricMetricAttributeKeySliceAttr) {
 		dp.Attributes().PutEmptySlice("slice_attr").FromRaw(sliceAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "map_attr") {
+	if slices.Contains(m.config.EnabledAttributes, DefaultMetricMetricAttributeKeyMapAttr) {
 		dp.Attributes().PutEmptyMap("map_attr").FromRaw(mapAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "opt_in_bool_attr") {
+	if slices.Contains(m.config.EnabledAttributes, DefaultMetricMetricAttributeKeyOptInBoolAttr) {
 		dp.Attributes().PutBool("opt_in_bool_attr", optInBoolAttrAttributeValue)
 	}
 	for _, op := range options {
@@ -168,31 +239,31 @@ func (m *metricDefaultMetric) recordDataPoint(start pcommon.Timestamp, ts pcommo
 	}
 
 	var s string
+	key := dataPointKey(dp)
 	dps := m.data.Sum().DataPoints()
-	for i := 0; i < dps.Len(); i++ {
+	if i, ok := m.dpIndex[key]; ok {
 		dpi := dps.At(i)
-		if dp.Attributes().Equal(dpi.Attributes()) && dp.StartTimestamp() == dpi.StartTimestamp() && dp.Timestamp() == dpi.Timestamp() {
-			switch s = m.config.AggregationStrategy; s {
-			case AggregationStrategySum, AggregationStrategyAvg:
-				dpi.SetIntValue(dpi.IntValue() + val)
-				m.aggDataPoints[i] += 1
-				return
-			case AggregationStrategyMin:
-				if dpi.IntValue() > val {
-					dpi.SetIntValue(val)
-				}
-				return
-			case AggregationStrategyMax:
-				if dpi.IntValue() < val {
-					dpi.SetIntValue(val)
-				}
-				return
+		switch s = m.config.AggregationStrategy; s {
+		case AggregationStrategySum, AggregationStrategyAvg:
+			dpi.SetIntValue(dpi.IntValue() + val)
+			m.aggDataPoints[i] += 1
+			return
+		case AggregationStrategyMin:
+			if dpi.IntValue() > val {
+				dpi.SetIntValue(val)
 			}
+			return
+		case AggregationStrategyMax:
+			if dpi.IntValue() < val {
+				dpi.SetIntValue(val)
+			}
+			return
 		}
 	}
 
 	dp.SetIntValue(val)
 	m.aggDataPoints = append(m.aggDataPoints, 1)
+	m.dpIndex[key] = dps.Len()
 	dp.MoveTo(dps.AppendEmpty())
 }
 
@@ -217,7 +288,7 @@ func (m *metricDefaultMetric) emit(metrics pmetric.MetricSlice) {
 	}
 }
 
-func newMetricDefaultMetric(cfg MetricConfig) metricDefaultMetric {
+func newMetricDefaultMetric(cfg DefaultMetricMetricConfig) metricDefaultMetric {
 	m := metricDefaultMetric{config: cfg}
 
 	if cfg.Enabled {
@@ -228,10 +299,9 @@ func newMetricDefaultMetric(cfg MetricConfig) metricDefaultMetric {
 }
 
 type metricDefaultMetricToBeRemoved struct {
-	data          pmetric.Metric // data buffer for generated metric.
-	config        MetricConfig   // metric config provided by user.
-	capacity      int            // max observed number of data points added to the metric.
-	aggDataPoints []float64      // slice containing number of aggregated datapoints at each index
+	data     pmetric.Metric                       // data buffer for generated metric.
+	config   DefaultMetricToBeRemovedMetricConfig // metric config provided by user.
+	capacity int                                  // max observed number of data points added to the metric.
 }
 
 // init fills default.metric.to_be_removed metric with initial data.
@@ -242,45 +312,16 @@ func (m *metricDefaultMetricToBeRemoved) init() {
 	m.data.SetEmptySum()
 	m.data.Sum().SetIsMonotonic(false)
 	m.data.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityDelta)
-	m.aggDataPoints = m.aggDataPoints[:0]
 }
 
 func (m *metricDefaultMetricToBeRemoved) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64) {
 	if !m.config.Enabled {
 		return
 	}
-
-	dp := pmetric.NewNumberDataPoint()
+	dp := m.data.Sum().DataPoints().AppendEmpty()
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
-
-	var s string
-	dps := m.data.Sum().DataPoints()
-	for i := 0; i < dps.Len(); i++ {
-		dpi := dps.At(i)
-		if dp.Attributes().Equal(dpi.Attributes()) && dp.StartTimestamp() == dpi.StartTimestamp() && dp.Timestamp() == dpi.Timestamp() {
-			switch s = m.config.AggregationStrategy; s {
-			case AggregationStrategySum, AggregationStrategyAvg:
-				dpi.SetDoubleValue(dpi.DoubleValue() + val)
-				m.aggDataPoints[i] += 1
-				return
-			case AggregationStrategyMin:
-				if dpi.DoubleValue() > val {
-					dpi.SetDoubleValue(val)
-				}
-				return
-			case AggregationStrategyMax:
-				if dpi.DoubleValue() < val {
-					dpi.SetDoubleValue(val)
-				}
-				return
-			}
-		}
-	}
-
 	dp.SetDoubleValue(val)
-	m.aggDataPoints = append(m.aggDataPoints, 1)
-	dp.MoveTo(dps.AppendEmpty())
 }
 
 // updateCapacity saves max length of data point slices that will be used for the slice capacity.
@@ -293,18 +334,13 @@ func (m *metricDefaultMetricToBeRemoved) updateCapacity() {
 // emit appends recorded metric data to a metrics slice and prepares it for recording another set of data points.
 func (m *metricDefaultMetricToBeRemoved) emit(metrics pmetric.MetricSlice) {
 	if m.config.Enabled && m.data.Sum().DataPoints().Len() > 0 {
-		if m.config.AggregationStrategy == AggregationStrategyAvg {
-			for i, aggCount := range m.aggDataPoints {
-				m.data.Sum().DataPoints().At(i).SetDoubleValue(m.data.Sum().DataPoints().At(i).DoubleValue() / aggCount)
-			}
-		}
 		m.updateCapacity()
 		m.data.MoveTo(metrics.AppendEmpty())
 		m.init()
 	}
 }
 
-func newMetricDefaultMetricToBeRemoved(cfg MetricConfig) metricDefaultMetricToBeRemoved {
+func newMetricDefaultMetricToBeRemoved(cfg DefaultMetricToBeRemovedMetricConfig) metricDefaultMetricToBeRemoved {
 	m := metricDefaultMetricToBeRemoved{config: cfg}
 
 	if cfg.Enabled {
@@ -315,10 +351,11 @@ func newMetricDefaultMetricToBeRemoved(cfg MetricConfig) metricDefaultMetricToBe
 }
 
 type metricMetricInputType struct {
-	data          pmetric.Metric // data buffer for generated metric.
-	config        MetricConfig   // metric config provided by user.
-	capacity      int            // max observed number of data points added to the metric.
-	aggDataPoints []int64        // slice containing number of aggregated datapoints at each index
+	data          pmetric.Metric              // data buffer for generated metric.
+	config        MetricInputTypeMetricConfig // metric config provided by user.
+	capacity      int                         // max observed number of data points added to the metric.
+	aggDataPoints []int64                     // slice containing number of aggregated datapoints at each index
+	dpIndex       map[uint64]int              // maps a data point's hash to its index, for O(1) dedup lookup.
 }
 
 // init fills metric.input_type metric with initial data.
@@ -331,6 +368,7 @@ func (m *metricMetricInputType) init() {
 	m.data.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
 	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
 	m.aggDataPoints = m.aggDataPoints[:0]
+	m.dpIndex = make(map[uint64]int, m.capacity)
 }
 
 func (m *metricMetricInputType) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, stringAttrAttributeValue string, overriddenIntAttrAttributeValue int64, enumAttrAttributeValue string, sliceAttrAttributeValue []any, mapAttrAttributeValue map[string]any) {
@@ -341,48 +379,48 @@ func (m *metricMetricInputType) recordDataPoint(start pcommon.Timestamp, ts pcom
 	dp := pmetric.NewNumberDataPoint()
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
-	if slices.Contains(m.config.EnabledAttributes, "string_attr") {
+	if slices.Contains(m.config.EnabledAttributes, MetricInputTypeMetricAttributeKeyStringAttr) {
 		dp.Attributes().PutStr("string_attr", stringAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "state") {
+	if slices.Contains(m.config.EnabledAttributes, MetricInputTypeMetricAttributeKeyOverriddenIntAttr) {
 		dp.Attributes().PutInt("state", overriddenIntAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "enum_attr") {
+	if slices.Contains(m.config.EnabledAttributes, MetricInputTypeMetricAttributeKeyEnumAttr) {
 		dp.Attributes().PutStr("enum_attr", enumAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "slice_attr") {
+	if slices.Contains(m.config.EnabledAttributes, MetricInputTypeMetricAttributeKeySliceAttr) {
 		dp.Attributes().PutEmptySlice("slice_attr").FromRaw(sliceAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "map_attr") {
+	if slices.Contains(m.config.EnabledAttributes, MetricInputTypeMetricAttributeKeyMapAttr) {
 		dp.Attributes().PutEmptyMap("map_attr").FromRaw(mapAttrAttributeValue)
 	}
 
 	var s string
+	key := dataPointKey(dp)
 	dps := m.data.Sum().DataPoints()
-	for i := 0; i < dps.Len(); i++ {
+	if i, ok := m.dpIndex[key]; ok {
 		dpi := dps.At(i)
-		if dp.Attributes().Equal(dpi.Attributes()) && dp.StartTimestamp() == dpi.StartTimestamp() && dp.Timestamp() == dpi.Timestamp() {
-			switch s = m.config.AggregationStrategy; s {
-			case AggregationStrategySum, AggregationStrategyAvg:
-				dpi.SetIntValue(dpi.IntValue() + val)
-				m.aggDataPoints[i] += 1
-				return
-			case AggregationStrategyMin:
-				if dpi.IntValue() > val {
-					dpi.SetIntValue(val)
-				}
-				return
-			case AggregationStrategyMax:
-				if dpi.IntValue() < val {
-					dpi.SetIntValue(val)
-				}
-				return
+		switch s = m.config.AggregationStrategy; s {
+		case AggregationStrategySum, AggregationStrategyAvg:
+			dpi.SetIntValue(dpi.IntValue() + val)
+			m.aggDataPoints[i] += 1
+			return
+		case AggregationStrategyMin:
+			if dpi.IntValue() > val {
+				dpi.SetIntValue(val)
 			}
+			return
+		case AggregationStrategyMax:
+			if dpi.IntValue() < val {
+				dpi.SetIntValue(val)
+			}
+			return
 		}
 	}
 
 	dp.SetIntValue(val)
 	m.aggDataPoints = append(m.aggDataPoints, 1)
+	m.dpIndex[key] = dps.Len()
 	dp.MoveTo(dps.AppendEmpty())
 }
 
@@ -407,7 +445,7 @@ func (m *metricMetricInputType) emit(metrics pmetric.MetricSlice) {
 	}
 }
 
-func newMetricMetricInputType(cfg MetricConfig) metricMetricInputType {
+func newMetricMetricInputType(cfg MetricInputTypeMetricConfig) metricMetricInputType {
 	m := metricMetricInputType{config: cfg}
 
 	if cfg.Enabled {
@@ -418,10 +456,11 @@ func newMetricMetricInputType(cfg MetricConfig) metricMetricInputType {
 }
 
 type metricOptionalMetric struct {
-	data          pmetric.Metric // data buffer for generated metric.
-	config        MetricConfig   // metric config provided by user.
-	capacity      int            // max observed number of data points added to the metric.
-	aggDataPoints []float64      // slice containing number of aggregated datapoints at each index
+	data          pmetric.Metric             // data buffer for generated metric.
+	config        OptionalMetricMetricConfig // metric config provided by user.
+	capacity      int                        // max observed number of data points added to the metric.
+	aggDataPoints []float64                  // slice containing number of aggregated datapoints at each index
+	dpIndex       map[uint64]int             // maps a data point's hash to its index, for O(1) dedup lookup.
 }
 
 // init fills optional.metric metric with initial data.
@@ -432,6 +471,7 @@ func (m *metricOptionalMetric) init() {
 	m.data.SetEmptyGauge()
 	m.data.Gauge().DataPoints().EnsureCapacity(m.capacity)
 	m.aggDataPoints = m.aggDataPoints[:0]
+	m.dpIndex = make(map[uint64]int, m.capacity)
 }
 
 func (m *metricOptionalMetric) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, stringAttrAttributeValue string, booleanAttrAttributeValue bool, booleanAttr2AttributeValue bool, options ...MetricAttributeOption) {
@@ -442,13 +482,13 @@ func (m *metricOptionalMetric) recordDataPoint(start pcommon.Timestamp, ts pcomm
 	dp := pmetric.NewNumberDataPoint()
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
-	if slices.Contains(m.config.EnabledAttributes, "string_attr") {
+	if slices.Contains(m.config.EnabledAttributes, OptionalMetricMetricAttributeKeyStringAttr) {
 		dp.Attributes().PutStr("string_attr", stringAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "boolean_attr") {
+	if slices.Contains(m.config.EnabledAttributes, OptionalMetricMetricAttributeKeyBooleanAttr) {
 		dp.Attributes().PutBool("boolean_attr", booleanAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "boolean_attr2") {
+	if slices.Contains(m.config.EnabledAttributes, OptionalMetricMetricAttributeKeyBooleanAttr2) {
 		dp.Attributes().PutBool("boolean_attr2", booleanAttr2AttributeValue)
 	}
 	for _, op := range options {
@@ -456,31 +496,31 @@ func (m *metricOptionalMetric) recordDataPoint(start pcommon.Timestamp, ts pcomm
 	}
 
 	var s string
+	key := dataPointKey(dp)
 	dps := m.data.Gauge().DataPoints()
-	for i := 0; i < dps.Len(); i++ {
+	if i, ok := m.dpIndex[key]; ok {
 		dpi := dps.At(i)
-		if dp.Attributes().Equal(dpi.Attributes()) && dp.StartTimestamp() == dpi.StartTimestamp() && dp.Timestamp() == dpi.Timestamp() {
-			switch s = m.config.AggregationStrategy; s {
-			case AggregationStrategySum, AggregationStrategyAvg:
-				dpi.SetDoubleValue(dpi.DoubleValue() + val)
-				m.aggDataPoints[i] += 1
-				return
-			case AggregationStrategyMin:
-				if dpi.DoubleValue() > val {
-					dpi.SetDoubleValue(val)
-				}
-				return
-			case AggregationStrategyMax:
-				if dpi.DoubleValue() < val {
-					dpi.SetDoubleValue(val)
-				}
-				return
+		switch s = m.config.AggregationStrategy; s {
+		case AggregationStrategySum, AggregationStrategyAvg:
+			dpi.SetDoubleValue(dpi.DoubleValue() + val)
+			m.aggDataPoints[i] += 1
+			return
+		case AggregationStrategyMin:
+			if dpi.DoubleValue() > val {
+				dpi.SetDoubleValue(val)
 			}
+			return
+		case AggregationStrategyMax:
+			if dpi.DoubleValue() < val {
+				dpi.SetDoubleValue(val)
+			}
+			return
 		}
 	}
 
 	dp.SetDoubleValue(val)
 	m.aggDataPoints = append(m.aggDataPoints, 1)
+	m.dpIndex[key] = dps.Len()
 	dp.MoveTo(dps.AppendEmpty())
 }
 
@@ -505,7 +545,7 @@ func (m *metricOptionalMetric) emit(metrics pmetric.MetricSlice) {
 	}
 }
 
-func newMetricOptionalMetric(cfg MetricConfig) metricOptionalMetric {
+func newMetricOptionalMetric(cfg OptionalMetricMetricConfig) metricOptionalMetric {
 	m := metricOptionalMetric{config: cfg}
 
 	if cfg.Enabled {
@@ -516,10 +556,11 @@ func newMetricOptionalMetric(cfg MetricConfig) metricOptionalMetric {
 }
 
 type metricOptionalMetricEmptyUnit struct {
-	data          pmetric.Metric // data buffer for generated metric.
-	config        MetricConfig   // metric config provided by user.
-	capacity      int            // max observed number of data points added to the metric.
-	aggDataPoints []float64      // slice containing number of aggregated datapoints at each index
+	data          pmetric.Metric                      // data buffer for generated metric.
+	config        OptionalMetricEmptyUnitMetricConfig // metric config provided by user.
+	capacity      int                                 // max observed number of data points added to the metric.
+	aggDataPoints []float64                           // slice containing number of aggregated datapoints at each index
+	dpIndex       map[uint64]int                      // maps a data point's hash to its index, for O(1) dedup lookup.
 }
 
 // init fills optional.metric.empty_unit metric with initial data.
@@ -530,6 +571,7 @@ func (m *metricOptionalMetricEmptyUnit) init() {
 	m.data.SetEmptyGauge()
 	m.data.Gauge().DataPoints().EnsureCapacity(m.capacity)
 	m.aggDataPoints = m.aggDataPoints[:0]
+	m.dpIndex = make(map[uint64]int, m.capacity)
 }
 
 func (m *metricOptionalMetricEmptyUnit) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, stringAttrAttributeValue string, booleanAttrAttributeValue bool) {
@@ -540,39 +582,39 @@ func (m *metricOptionalMetricEmptyUnit) recordDataPoint(start pcommon.Timestamp,
 	dp := pmetric.NewNumberDataPoint()
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
-	if slices.Contains(m.config.EnabledAttributes, "string_attr") {
+	if slices.Contains(m.config.EnabledAttributes, OptionalMetricEmptyUnitMetricAttributeKeyStringAttr) {
 		dp.Attributes().PutStr("string_attr", stringAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "boolean_attr") {
+	if slices.Contains(m.config.EnabledAttributes, OptionalMetricEmptyUnitMetricAttributeKeyBooleanAttr) {
 		dp.Attributes().PutBool("boolean_attr", booleanAttrAttributeValue)
 	}
 
 	var s string
+	key := dataPointKey(dp)
 	dps := m.data.Gauge().DataPoints()
-	for i := 0; i < dps.Len(); i++ {
+	if i, ok := m.dpIndex[key]; ok {
 		dpi := dps.At(i)
-		if dp.Attributes().Equal(dpi.Attributes()) && dp.StartTimestamp() == dpi.StartTimestamp() && dp.Timestamp() == dpi.Timestamp() {
-			switch s = m.config.AggregationStrategy; s {
-			case AggregationStrategySum, AggregationStrategyAvg:
-				dpi.SetDoubleValue(dpi.DoubleValue() + val)
-				m.aggDataPoints[i] += 1
-				return
-			case AggregationStrategyMin:
-				if dpi.DoubleValue() > val {
-					dpi.SetDoubleValue(val)
-				}
-				return
-			case AggregationStrategyMax:
-				if dpi.DoubleValue() < val {
-					dpi.SetDoubleValue(val)
-				}
-				return
+		switch s = m.config.AggregationStrategy; s {
+		case AggregationStrategySum, AggregationStrategyAvg:
+			dpi.SetDoubleValue(dpi.DoubleValue() + val)
+			m.aggDataPoints[i] += 1
+			return
+		case AggregationStrategyMin:
+			if dpi.DoubleValue() > val {
+				dpi.SetDoubleValue(val)
 			}
+			return
+		case AggregationStrategyMax:
+			if dpi.DoubleValue() < val {
+				dpi.SetDoubleValue(val)
+			}
+			return
 		}
 	}
 
 	dp.SetDoubleValue(val)
 	m.aggDataPoints = append(m.aggDataPoints, 1)
+	m.dpIndex[key] = dps.Len()
 	dp.MoveTo(dps.AppendEmpty())
 }
 
@@ -597,7 +639,7 @@ func (m *metricOptionalMetricEmptyUnit) emit(metrics pmetric.MetricSlice) {
 	}
 }
 
-func newMetricOptionalMetricEmptyUnit(cfg MetricConfig) metricOptionalMetricEmptyUnit {
+func newMetricOptionalMetricEmptyUnit(cfg OptionalMetricEmptyUnitMetricConfig) metricOptionalMetricEmptyUnit {
 	m := metricOptionalMetricEmptyUnit{config: cfg}
 
 	if cfg.Enabled {
@@ -608,10 +650,11 @@ func newMetricOptionalMetricEmptyUnit(cfg MetricConfig) metricOptionalMetricEmpt
 }
 
 type metricReaggregateMetric struct {
-	data          pmetric.Metric // data buffer for generated metric.
-	config        MetricConfig   // metric config provided by user.
-	capacity      int            // max observed number of data points added to the metric.
-	aggDataPoints []float64      // slice containing number of aggregated datapoints at each index
+	data          pmetric.Metric                // data buffer for generated metric.
+	config        ReaggregateMetricMetricConfig // metric config provided by user.
+	capacity      int                           // max observed number of data points added to the metric.
+	aggDataPoints []float64                     // slice containing number of aggregated datapoints at each index
+	dpIndex       map[uint64]int                // maps a data point's hash to its index, for O(1) dedup lookup.
 }
 
 // init fills reaggregate.metric metric with initial data.
@@ -622,6 +665,7 @@ func (m *metricReaggregateMetric) init() {
 	m.data.SetEmptyGauge()
 	m.data.Gauge().DataPoints().EnsureCapacity(m.capacity)
 	m.aggDataPoints = m.aggDataPoints[:0]
+	m.dpIndex = make(map[uint64]int, m.capacity)
 }
 
 func (m *metricReaggregateMetric) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, stringAttrAttributeValue string, booleanAttrAttributeValue bool) {
@@ -632,39 +676,39 @@ func (m *metricReaggregateMetric) recordDataPoint(start pcommon.Timestamp, ts pc
 	dp := pmetric.NewNumberDataPoint()
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
-	if slices.Contains(m.config.EnabledAttributes, "string_attr") {
+	if slices.Contains(m.config.EnabledAttributes, ReaggregateMetricMetricAttributeKeyStringAttr) {
 		dp.Attributes().PutStr("string_attr", stringAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "boolean_attr") {
+	if slices.Contains(m.config.EnabledAttributes, ReaggregateMetricMetricAttributeKeyBooleanAttr) {
 		dp.Attributes().PutBool("boolean_attr", booleanAttrAttributeValue)
 	}
 
 	var s string
+	key := dataPointKey(dp)
 	dps := m.data.Gauge().DataPoints()
-	for i := 0; i < dps.Len(); i++ {
+	if i, ok := m.dpIndex[key]; ok {
 		dpi := dps.At(i)
-		if dp.Attributes().Equal(dpi.Attributes()) && dp.StartTimestamp() == dpi.StartTimestamp() && dp.Timestamp() == dpi.Timestamp() {
-			switch s = m.config.AggregationStrategy; s {
-			case AggregationStrategySum, AggregationStrategyAvg:
-				dpi.SetDoubleValue(dpi.DoubleValue() + val)
-				m.aggDataPoints[i] += 1
-				return
-			case AggregationStrategyMin:
-				if dpi.DoubleValue() > val {
-					dpi.SetDoubleValue(val)
-				}
-				return
-			case AggregationStrategyMax:
-				if dpi.DoubleValue() < val {
-					dpi.SetDoubleValue(val)
-				}
-				return
+		switch s = m.config.AggregationStrategy; s {
+		case AggregationStrategySum, AggregationStrategyAvg:
+			dpi.SetDoubleValue(dpi.DoubleValue() + val)
+			m.aggDataPoints[i] += 1
+			return
+		case AggregationStrategyMin:
+			if dpi.DoubleValue() > val {
+				dpi.SetDoubleValue(val)
 			}
+			return
+		case AggregationStrategyMax:
+			if dpi.DoubleValue() < val {
+				dpi.SetDoubleValue(val)
+			}
+			return
 		}
 	}
 
 	dp.SetDoubleValue(val)
 	m.aggDataPoints = append(m.aggDataPoints, 1)
+	m.dpIndex[key] = dps.Len()
 	dp.MoveTo(dps.AppendEmpty())
 }
 
@@ -689,7 +733,7 @@ func (m *metricReaggregateMetric) emit(metrics pmetric.MetricSlice) {
 	}
 }
 
-func newMetricReaggregateMetric(cfg MetricConfig) metricReaggregateMetric {
+func newMetricReaggregateMetric(cfg ReaggregateMetricMetricConfig) metricReaggregateMetric {
 	m := metricReaggregateMetric{config: cfg}
 
 	if cfg.Enabled {
@@ -700,10 +744,11 @@ func newMetricReaggregateMetric(cfg MetricConfig) metricReaggregateMetric {
 }
 
 type metricReaggregateMetricWithRequired struct {
-	data          pmetric.Metric // data buffer for generated metric.
-	config        MetricConfig   // metric config provided by user.
-	capacity      int            // max observed number of data points added to the metric.
-	aggDataPoints []float64      // slice containing number of aggregated datapoints at each index
+	data          pmetric.Metric                            // data buffer for generated metric.
+	config        ReaggregateMetricWithRequiredMetricConfig // metric config provided by user.
+	capacity      int                                       // max observed number of data points added to the metric.
+	aggDataPoints []float64                                 // slice containing number of aggregated datapoints at each index
+	dpIndex       map[uint64]int                            // maps a data point's hash to its index, for O(1) dedup lookup.
 }
 
 // init fills reaggregate.metric.with_required metric with initial data.
@@ -714,6 +759,7 @@ func (m *metricReaggregateMetricWithRequired) init() {
 	m.data.SetEmptyGauge()
 	m.data.Gauge().DataPoints().EnsureCapacity(m.capacity)
 	m.aggDataPoints = m.aggDataPoints[:0]
+	m.dpIndex = make(map[uint64]int, m.capacity)
 }
 
 func (m *metricReaggregateMetricWithRequired) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val float64, requiredStringAttrAttributeValue string, stringAttrAttributeValue string, booleanAttrAttributeValue bool) {
@@ -724,42 +770,42 @@ func (m *metricReaggregateMetricWithRequired) recordDataPoint(start pcommon.Time
 	dp := pmetric.NewNumberDataPoint()
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
-	if slices.Contains(m.config.EnabledAttributes, "required_string_attr") {
+	if slices.Contains(m.config.EnabledAttributes, ReaggregateMetricWithRequiredMetricAttributeKeyRequiredStringAttr) {
 		dp.Attributes().PutStr("required_string_attr", requiredStringAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "string_attr") {
+	if slices.Contains(m.config.EnabledAttributes, ReaggregateMetricWithRequiredMetricAttributeKeyStringAttr) {
 		dp.Attributes().PutStr("string_attr", stringAttrAttributeValue)
 	}
-	if slices.Contains(m.config.EnabledAttributes, "boolean_attr") {
+	if slices.Contains(m.config.EnabledAttributes, ReaggregateMetricWithRequiredMetricAttributeKeyBooleanAttr) {
 		dp.Attributes().PutBool("boolean_attr", booleanAttrAttributeValue)
 	}
 
 	var s string
+	key := dataPointKey(dp)
 	dps := m.data.Gauge().DataPoints()
-	for i := 0; i < dps.Len(); i++ {
+	if i, ok := m.dpIndex[key]; ok {
 		dpi := dps.At(i)
-		if dp.Attributes().Equal(dpi.Attributes()) && dp.StartTimestamp() == dpi.StartTimestamp() && dp.Timestamp() == dpi.Timestamp() {
-			switch s = m.config.AggregationStrategy; s {
-			case AggregationStrategySum, AggregationStrategyAvg:
-				dpi.SetDoubleValue(dpi.DoubleValue() + val)
-				m.aggDataPoints[i] += 1
-				return
-			case AggregationStrategyMin:
-				if dpi.DoubleValue() > val {
-					dpi.SetDoubleValue(val)
-				}
-				return
-			case AggregationStrategyMax:
-				if dpi.DoubleValue() < val {
-					dpi.SetDoubleValue(val)
-				}
-				return
+		switch s = m.config.AggregationStrategy; s {
+		case AggregationStrategySum, AggregationStrategyAvg:
+			dpi.SetDoubleValue(dpi.DoubleValue() + val)
+			m.aggDataPoints[i] += 1
+			return
+		case AggregationStrategyMin:
+			if dpi.DoubleValue() > val {
+				dpi.SetDoubleValue(val)
 			}
+			return
+		case AggregationStrategyMax:
+			if dpi.DoubleValue() < val {
+				dpi.SetDoubleValue(val)
+			}
+			return
 		}
 	}
 
 	dp.SetDoubleValue(val)
 	m.aggDataPoints = append(m.aggDataPoints, 1)
+	m.dpIndex[key] = dps.Len()
 	dp.MoveTo(dps.AppendEmpty())
 }
 
@@ -784,7 +830,7 @@ func (m *metricReaggregateMetricWithRequired) emit(metrics pmetric.MetricSlice) 
 	}
 }
 
-func newMetricReaggregateMetricWithRequired(cfg MetricConfig) metricReaggregateMetricWithRequired {
+func newMetricReaggregateMetricWithRequired(cfg ReaggregateMetricWithRequiredMetricConfig) metricReaggregateMetricWithRequired {
 	m := metricReaggregateMetricWithRequired{config: cfg}
 
 	if cfg.Enabled {
@@ -795,10 +841,11 @@ func newMetricReaggregateMetricWithRequired(cfg MetricConfig) metricReaggregateM
 }
 
 type metricSystemCPUTime struct {
-	data          pmetric.Metric // data buffer for generated metric.
-	config        MetricConfig   // metric config provided by user.
-	capacity      int            // max observed number of data points added to the metric.
-	aggDataPoints []int64        // slice containing number of aggregated datapoints at each index
+	data          pmetric.Metric            // data buffer for generated metric.
+	config        SystemCPUTimeMetricConfig // metric config provided by user.
+	capacity      int                       // max observed number of data points added to the metric.
+	aggDataPoints []int64                   // slice containing number of aggregated datapoints at each index
+	dpIndex       map[uint64]int            // maps a data point's hash to its index, for O(1) dedup lookup.
 }
 
 // init fills system.cpu.time metric with initial data.
@@ -809,10 +856,12 @@ func (m *metricSystemCPUTime) init() {
 	m.data.SetEmptySum()
 	m.data.Sum().SetIsMonotonic(true)
 	m.data.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
+	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
 	m.aggDataPoints = m.aggDataPoints[:0]
+	m.dpIndex = make(map[uint64]int, m.capacity)
 }
 
-func (m *metricSystemCPUTime) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64) {
+func (m *metricSystemCPUTime) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, cpuAttributeValue string) {
 	if !m.config.Enabled {
 		return
 	}
@@ -820,33 +869,36 @@ func (m *metricSystemCPUTime) recordDataPoint(start pcommon.Timestamp, ts pcommo
 	dp := pmetric.NewNumberDataPoint()
 	dp.SetStartTimestamp(start)
 	dp.SetTimestamp(ts)
+	if slices.Contains(m.config.EnabledAttributes, SystemCPUTimeMetricAttributeKeyCPU) {
+		dp.Attributes().PutStr("cpu", cpuAttributeValue)
+	}
 
 	var s string
+	key := dataPointKey(dp)
 	dps := m.data.Sum().DataPoints()
-	for i := 0; i < dps.Len(); i++ {
+	if i, ok := m.dpIndex[key]; ok {
 		dpi := dps.At(i)
-		if dp.Attributes().Equal(dpi.Attributes()) && dp.StartTimestamp() == dpi.StartTimestamp() && dp.Timestamp() == dpi.Timestamp() {
-			switch s = m.config.AggregationStrategy; s {
-			case AggregationStrategySum, AggregationStrategyAvg:
-				dpi.SetIntValue(dpi.IntValue() + val)
-				m.aggDataPoints[i] += 1
-				return
-			case AggregationStrategyMin:
-				if dpi.IntValue() > val {
-					dpi.SetIntValue(val)
-				}
-				return
-			case AggregationStrategyMax:
-				if dpi.IntValue() < val {
-					dpi.SetIntValue(val)
-				}
-				return
+		switch s = m.config.AggregationStrategy; s {
+		case AggregationStrategySum, AggregationStrategyAvg:
+			dpi.SetIntValue(dpi.IntValue() + val)
+			m.aggDataPoints[i] += 1
+			return
+		case AggregationStrategyMin:
+			if dpi.IntValue() > val {
+				dpi.SetIntValue(val)
 			}
+			return
+		case AggregationStrategyMax:
+			if dpi.IntValue() < val {
+				dpi.SetIntValue(val)
+			}
+			return
 		}
 	}
 
 	dp.SetIntValue(val)
 	m.aggDataPoints = append(m.aggDataPoints, 1)
+	m.dpIndex[key] = dps.Len()
 	dp.MoveTo(dps.AppendEmpty())
 }
 
@@ -871,8 +923,101 @@ func (m *metricSystemCPUTime) emit(metrics pmetric.MetricSlice) {
 	}
 }
 
-func newMetricSystemCPUTime(cfg MetricConfig) metricSystemCPUTime {
+func newMetricSystemCPUTime(cfg SystemCPUTimeMetricConfig) metricSystemCPUTime {
 	m := metricSystemCPUTime{config: cfg}
+
+	if cfg.Enabled {
+		m.data = pmetric.NewMetric()
+		m.init()
+	}
+	return m
+}
+
+type metricSystemMemoryUsage struct {
+	data          pmetric.Metric                // data buffer for generated metric.
+	config        SystemMemoryUsageMetricConfig // metric config provided by user.
+	capacity      int                           // max observed number of data points added to the metric.
+	aggDataPoints []int64                       // slice containing number of aggregated datapoints at each index
+	dpIndex       map[uint64]int                // maps a data point's hash to its index, for O(1) dedup lookup.
+}
+
+// init fills system.memory.usage metric with initial data.
+func (m *metricSystemMemoryUsage) init() {
+	m.data.SetName("system.memory.usage")
+	m.data.SetDescription("Bytes of memory in use.")
+	m.data.SetUnit("By")
+	m.data.SetEmptySum()
+	m.data.Sum().SetIsMonotonic(false)
+	m.data.Sum().SetAggregationTemporality(pmetric.AggregationTemporalityCumulative)
+	m.data.Sum().DataPoints().EnsureCapacity(m.capacity)
+	m.aggDataPoints = m.aggDataPoints[:0]
+	m.dpIndex = make(map[uint64]int, m.capacity)
+}
+
+func (m *metricSystemMemoryUsage) recordDataPoint(start pcommon.Timestamp, ts pcommon.Timestamp, val int64, stateAttributeValue string) {
+	if !m.config.Enabled {
+		return
+	}
+
+	dp := pmetric.NewNumberDataPoint()
+	dp.SetStartTimestamp(start)
+	dp.SetTimestamp(ts)
+	if slices.Contains(m.config.EnabledAttributes, SystemMemoryUsageMetricAttributeKeyState) {
+		dp.Attributes().PutStr("state", stateAttributeValue)
+	}
+
+	var s string
+	key := dataPointKey(dp)
+	dps := m.data.Sum().DataPoints()
+	if i, ok := m.dpIndex[key]; ok {
+		dpi := dps.At(i)
+		switch s = m.config.AggregationStrategy; s {
+		case AggregationStrategySum, AggregationStrategyAvg:
+			dpi.SetIntValue(dpi.IntValue() + val)
+			m.aggDataPoints[i] += 1
+			return
+		case AggregationStrategyMin:
+			if dpi.IntValue() > val {
+				dpi.SetIntValue(val)
+			}
+			return
+		case AggregationStrategyMax:
+			if dpi.IntValue() < val {
+				dpi.SetIntValue(val)
+			}
+			return
+		}
+	}
+
+	dp.SetIntValue(val)
+	m.aggDataPoints = append(m.aggDataPoints, 1)
+	m.dpIndex[key] = dps.Len()
+	dp.MoveTo(dps.AppendEmpty())
+}
+
+// updateCapacity saves max length of data point slices that will be used for the slice capacity.
+func (m *metricSystemMemoryUsage) updateCapacity() {
+	if m.data.Sum().DataPoints().Len() > m.capacity {
+		m.capacity = m.data.Sum().DataPoints().Len()
+	}
+}
+
+// emit appends recorded metric data to a metrics slice and prepares it for recording another set of data points.
+func (m *metricSystemMemoryUsage) emit(metrics pmetric.MetricSlice) {
+	if m.config.Enabled && m.data.Sum().DataPoints().Len() > 0 {
+		if m.config.AggregationStrategy == AggregationStrategyAvg {
+			for i, aggCount := range m.aggDataPoints {
+				m.data.Sum().DataPoints().At(i).SetIntValue(m.data.Sum().DataPoints().At(i).IntValue() / aggCount)
+			}
+		}
+		m.updateCapacity()
+		m.data.MoveTo(metrics.AppendEmpty())
+		m.init()
+	}
+}
+
+func newMetricSystemMemoryUsage(cfg SystemMemoryUsageMetricConfig) metricSystemMemoryUsage {
+	m := metricSystemMemoryUsage{config: cfg}
 
 	if cfg.Enabled {
 		m.data = pmetric.NewMetric()
@@ -899,6 +1044,7 @@ type MetricsBuilder struct {
 	metricReaggregateMetric             metricReaggregateMetric
 	metricReaggregateMetricWithRequired metricReaggregateMetricWithRequired
 	metricSystemCPUTime                 metricSystemCPUTime
+	metricSystemMemoryUsage             metricSystemMemoryUsage
 }
 
 // MetricBuilderOption applies changes to default metrics builder.
@@ -940,6 +1086,9 @@ func NewMetricsBuilder(mbc MetricsBuilderConfig, settings receiver.Settings, opt
 	if mbc.ResourceAttributes.StringResourceAttrToBeRemoved.Enabled {
 		settings.Logger.Warn("[WARNING] `string.resource.attr_to_be_removed` should not be enabled: This resource_attribute is deprecated and will be removed soon.")
 	}
+	if mbc.ResourceAttributes.StringResourceDisabledAttrToBeRemoved.Enabled {
+		settings.Logger.Warn("[WARNING] `string.resource.disabled_attr_to_be_removed` should not be enabled: This resource_attribute is deprecated and will be removed soon.")
+	}
 	mb := &MetricsBuilder{
 		config:                              mbc,
 		startTime:                           pcommon.NewTimestampFromTime(time.Now()),
@@ -953,8 +1102,15 @@ func NewMetricsBuilder(mbc MetricsBuilderConfig, settings receiver.Settings, opt
 		metricReaggregateMetric:             newMetricReaggregateMetric(mbc.Metrics.ReaggregateMetric),
 		metricReaggregateMetricWithRequired: newMetricReaggregateMetricWithRequired(mbc.Metrics.ReaggregateMetricWithRequired),
 		metricSystemCPUTime:                 newMetricSystemCPUTime(mbc.Metrics.SystemCPUTime),
+		metricSystemMemoryUsage:             newMetricSystemMemoryUsage(mbc.Metrics.SystemMemoryUsage),
 		resourceAttributeIncludeFilter:      make(map[string]filter.Filter),
 		resourceAttributeExcludeFilter:      make(map[string]filter.Filter),
+	}
+	if mbc.ResourceAttributes.HostArch.MetricsInclude != nil {
+		mb.resourceAttributeIncludeFilter["host.arch"] = filter.CreateFilter(mbc.ResourceAttributes.HostArch.MetricsInclude)
+	}
+	if mbc.ResourceAttributes.HostArch.MetricsExclude != nil {
+		mb.resourceAttributeExcludeFilter["host.arch"] = filter.CreateFilter(mbc.ResourceAttributes.HostArch.MetricsExclude)
 	}
 	if mbc.ResourceAttributes.MapResourceAttr.MetricsInclude != nil {
 		mb.resourceAttributeIncludeFilter["map.resource.attr"] = filter.CreateFilter(mbc.ResourceAttributes.MapResourceAttr.MetricsInclude)
@@ -1003,6 +1159,12 @@ func NewMetricsBuilder(mbc MetricsBuilderConfig, settings receiver.Settings, opt
 	}
 	if mbc.ResourceAttributes.StringResourceAttrToBeRemoved.MetricsExclude != nil {
 		mb.resourceAttributeExcludeFilter["string.resource.attr_to_be_removed"] = filter.CreateFilter(mbc.ResourceAttributes.StringResourceAttrToBeRemoved.MetricsExclude)
+	}
+	if mbc.ResourceAttributes.StringResourceDisabledAttrToBeRemoved.MetricsInclude != nil {
+		mb.resourceAttributeIncludeFilter["string.resource.disabled_attr_to_be_removed"] = filter.CreateFilter(mbc.ResourceAttributes.StringResourceDisabledAttrToBeRemoved.MetricsInclude)
+	}
+	if mbc.ResourceAttributes.StringResourceDisabledAttrToBeRemoved.MetricsExclude != nil {
+		mb.resourceAttributeExcludeFilter["string.resource.disabled_attr_to_be_removed"] = filter.CreateFilter(mbc.ResourceAttributes.StringResourceDisabledAttrToBeRemoved.MetricsExclude)
 	}
 
 	for _, op := range options {
@@ -1082,6 +1244,7 @@ func (mb *MetricsBuilder) EmitForResource(options ...ResourceMetricsOption) {
 	mb.metricReaggregateMetric.emit(ils.Metrics())
 	mb.metricReaggregateMetricWithRequired.emit(ils.Metrics())
 	mb.metricSystemCPUTime.emit(ils.Metrics())
+	mb.metricSystemMemoryUsage.emit(ils.Metrics())
 
 	for _, op := range options {
 		op.apply(rm)
@@ -1154,8 +1317,13 @@ func (mb *MetricsBuilder) RecordReaggregateMetricWithRequiredDataPoint(ts pcommo
 }
 
 // RecordSystemCPUTimeDataPoint adds a data point to system.cpu.time metric.
-func (mb *MetricsBuilder) RecordSystemCPUTimeDataPoint(ts pcommon.Timestamp, val int64) {
-	mb.metricSystemCPUTime.recordDataPoint(mb.startTime, ts, val)
+func (mb *MetricsBuilder) RecordSystemCPUTimeDataPoint(ts pcommon.Timestamp, val int64, cpuAttributeValue string) {
+	mb.metricSystemCPUTime.recordDataPoint(mb.startTime, ts, val, cpuAttributeValue)
+}
+
+// RecordSystemMemoryUsageDataPoint adds a data point to system.memory.usage metric.
+func (mb *MetricsBuilder) RecordSystemMemoryUsageDataPoint(ts pcommon.Timestamp, val int64, stateAttributeValue AttributeState) {
+	mb.metricSystemMemoryUsage.recordDataPoint(mb.startTime, ts, val, stateAttributeValue.String())
 }
 
 // Reset resets metrics builder to its initial state. It should be used when external metrics source is restarted,

@@ -19,7 +19,7 @@ import (
 	"go.uber.org/zap"
 	"go.yaml.in/yaml/v3"
 
-	"go.opentelemetry.io/collector/confmap/internal"
+	"go.opentelemetry.io/collector/confmap/internal/metadata"
 	"go.opentelemetry.io/collector/featuregate"
 )
 
@@ -465,10 +465,10 @@ func TestMergeFunctionality(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.flagEnabled {
-				require.NoError(t, featuregate.GlobalRegistry().Set(internal.EnableMergeAppendOption.ID(), true))
+				require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ConfmapEnableMergeAppendOptionFeatureGate.ID(), true))
 				defer func() {
 					// Restore previous value.
-					require.NoError(t, featuregate.GlobalRegistry().Set(internal.EnableMergeAppendOption.ID(), false))
+					require.NoError(t, featuregate.GlobalRegistry().Set(metadata.ConfmapEnableMergeAppendOptionFeatureGate.ID(), false))
 				}()
 			}
 			runScenario(t, tt.scenarioFile)
@@ -563,4 +563,48 @@ func TestProviderRaceCondition(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, c)
 	require.NoError(t, resolver.Shutdown(context.Background()))
+}
+
+func TestResolverUnexpandedConf(t *testing.T) {
+	t.Run("nil before Resolve", func(t *testing.T) {
+		r, err := NewResolver(ResolverSettings{
+			URIs:              []string{"mock:"},
+			ProviderFactories: []ProviderFactory{newMockProvider(&mockProvider{retM: map[string]any{"a": "b"}})},
+		})
+		require.NoError(t, err)
+		assert.Nil(t, r.UnexpandedConf())
+	})
+
+	t.Run("captures pre-expansion view", func(t *testing.T) {
+		input := newFakeProvider("input", func(context.Context, string, WatcherFunc) (*Retrieved, error) {
+			return NewRetrieved(map[string]any{
+				"top": map[string]any{
+					"plain": "literal",
+					"host":  "${env:HOST}",
+				},
+			})
+		})
+		r, err := NewResolver(ResolverSettings{
+			URIs:              []string{"input:"},
+			ProviderFactories: []ProviderFactory{input, newEnvProvider()},
+		})
+		require.NoError(t, err)
+
+		resolved, err := r.Resolve(context.Background())
+		require.NoError(t, err)
+		require.NotNil(t, resolved)
+
+		// Resolved view has the env reference expanded.
+		assert.Equal(t, "localhost", resolved.Get("top::host"))
+
+		// Pre-expansion view preserves the ${env:HOST} reference verbatim.
+		pre := r.UnexpandedConf()
+		require.NotNil(t, pre)
+		assert.Equal(t, map[string]any{
+			"top": map[string]any{
+				"plain": "literal",
+				"host":  "${env:HOST}",
+			},
+		}, pre.ToStringMap())
+	})
 }

@@ -10,10 +10,9 @@ components:
     - all
     - cmd/builder
     - cmd/mdatagen
+    - cmd/schemagen
     - connector/forward
     - connector/sample
-    - consumer/consumererror/xconsumererror
-    - consumer/xconsumer
     - docs/rfcs
     - exporter/debug
     - exporter/nop
@@ -21,7 +20,6 @@ components:
     - exporter/otlp_http
     - extension/memory_limiter
     - extension/zpages
-    - pdata/pprofile
     - pkg/client
     - pkg/component
     - pkg/component/componentstatus
@@ -29,21 +27,23 @@ components:
     - pkg/config/configauth
     - pkg/config/configcompression
     - pkg/config/configgrpc
-    - pkg/config/confighttp
     - pkg/config/confighttp/xconfighttp
     - pkg/config/configmiddleware
     - pkg/config/confignet
     - pkg/config/configopaque
-    - pkg/config/configoptional
     - pkg/config/configretry
+    - pkg/config/configstorage
     - pkg/config/configtelemetry
     - pkg/config/configtls
+    - pkg/confighttp
+    - pkg/configoptional
     - pkg/confmap
     - pkg/connector
     - pkg/connector/connectortest
     - pkg/consumer
     - pkg/consumer/consumererror
     - pkg/consumer/consumertest
+    - pkg/consumererror/xconsumererror
     - pkg/exporter
     - pkg/exporter/exportertest
     - pkg/exporterhelper
@@ -56,10 +56,12 @@ components:
     - pkg/extensionmiddleware/extensionmiddlewaretest
     - pkg/featuregate
     - pkg/filter
+    - pkg/graph
     - pkg/otelcol
     - pkg/otelcol/otelcoltest
     - pkg/pdata
     - pkg/pipeline
+    - pkg/pprofile
     - pkg/processor
     - pkg/processor/processortest
     - pkg/processorhelper
@@ -67,14 +69,17 @@ components:
     - pkg/receiver
     - pkg/receiver/receivertest
     - pkg/receiverhelper
+    - pkg/samplepkg
     - pkg/scraper
     - pkg/scraper/scrapertest
     - pkg/scraperhelper
+    - pkg/scraperhelper/controller
     - pkg/service
     - pkg/service/hostcapabilities
     - pkg/service/telemetry/telemetrytest
     - pkg/xconfmap
     - pkg/xconnector
+    - pkg/xconsumer
     - pkg/xexporter
     - pkg/xexporterhelper
     - pkg/xextension
@@ -88,6 +93,7 @@ components:
     - pkg/xscraperhelper
     - processor/batch
     - processor/memory_limiter
+    - processor/queue_batch
     - processor/sample
     - provider/env
     - provider/file
@@ -98,5 +104,6 @@ components:
     - receiver/otlp
     - receiver/sample
     - receiver/sample
+    - receiver/sampleentity
     - scraper/sample
-    - service/graph
+    - scraper/samplemigration

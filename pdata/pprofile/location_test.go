@@ -108,26 +108,26 @@ func TestLocationSwitchDictionary(t *testing.T) {
 			}(),
 			dst: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo")
+				d.StringTable().Append("", "test")
 
 				d.MappingTable().AppendEmpty()
-				d.MappingTable().AppendEmpty()
+				m := d.MappingTable().AppendEmpty()
+				m.SetFilenameStrindex(1)
 				return d
 			}(),
 
 			wantLocation: func() Location {
 				l := NewLocation()
-				l.SetMappingIndex(2)
+				l.SetMappingIndex(1)
 				return l
 			}(),
 			wantDictionary: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo", "test")
+				d.StringTable().Append("", "test")
 
 				d.MappingTable().AppendEmpty()
-				d.MappingTable().AppendEmpty()
 				m := d.MappingTable().AppendEmpty()
-				m.SetFilenameStrindex(2)
+				m.SetFilenameStrindex(1)
 				return d
 			}(),
 		},
@@ -194,26 +194,27 @@ func TestLocationSwitchDictionary(t *testing.T) {
 			}(),
 			dst: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo")
+				d.StringTable().Append("", "test")
 
 				d.AttributeTable().AppendEmpty()
-				d.AttributeTable().AppendEmpty()
+				a := d.AttributeTable().AppendEmpty()
+				a.SetKeyStrindex(1)
+
 				return d
 			}(),
 
 			wantLocation: func() Location {
 				l := NewLocation()
-				l.AttributeIndices().Append(2)
+				l.AttributeIndices().Append(1)
 				return l
 			}(),
 			wantDictionary: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo", "test")
+				d.StringTable().Append("", "test")
 
 				d.AttributeTable().AppendEmpty()
-				d.AttributeTable().AppendEmpty()
 				a := d.AttributeTable().AppendEmpty()
-				a.SetKeyStrindex(2)
+				a.SetKeyStrindex(1)
 				return d
 			}(),
 		},
@@ -261,6 +262,29 @@ func TestLocationSwitchDictionary(t *testing.T) {
 			wantErr:        errors.New("invalid attribute index 2"),
 		},
 		{
+			name: "with a negative attribute index",
+			location: func() Location {
+				l := NewLocation()
+				l.AttributeIndices().Append(-1)
+				return l
+			}(),
+
+			src: func() ProfilesDictionary {
+				d := NewProfilesDictionary()
+				d.AttributeTable().AppendEmpty()
+				return d
+			}(),
+			dst: NewProfilesDictionary(),
+
+			wantLocation: func() Location {
+				l := NewLocation()
+				l.AttributeIndices().Append(-1)
+				return l
+			}(),
+			wantDictionary: NewProfilesDictionary(),
+			wantErr:        errors.New("invalid attribute index -1"),
+		},
+		{
 			name: "with an existing line",
 			location: func() Location {
 				l := NewLocation()
@@ -280,26 +304,27 @@ func TestLocationSwitchDictionary(t *testing.T) {
 			}(),
 			dst: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo")
+				d.StringTable().Append("", "test")
 
 				d.FunctionTable().AppendEmpty()
-				d.FunctionTable().AppendEmpty()
+				f := d.FunctionTable().AppendEmpty()
+				f.SetNameStrindex(1)
+
 				return d
 			}(),
 
 			wantLocation: func() Location {
 				l := NewLocation()
-				l.Lines().AppendEmpty().SetFunctionIndex(2)
+				l.Lines().AppendEmpty().SetFunctionIndex(1)
 				return l
 			}(),
 			wantDictionary: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo", "test")
+				d.StringTable().Append("", "test")
 
 				d.FunctionTable().AppendEmpty()
-				d.FunctionTable().AppendEmpty()
 				f := d.FunctionTable().AppendEmpty()
-				f.SetNameStrindex(2)
+				f.SetNameStrindex(1)
 				return d
 			}(),
 		},
@@ -307,7 +332,7 @@ func TestLocationSwitchDictionary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			l := tt.location
 			dst := tt.dst
-			err := l.switchDictionary(tt.src, dst)
+			err := l.switchDictionary(tt.src, dst, newMergeIndex(dst))
 
 			if tt.wantErr == nil {
 				require.NoError(t, err)
@@ -341,9 +366,10 @@ func BenchmarkLocationSwitchDictionary(b *testing.B) {
 		dst.StringTable().Append("", "foo")
 		dst.AttributeTable().AppendEmpty()
 		dst.AttributeTable().AppendEmpty().SetKeyStrindex(1)
+		mi := newMergeIndex(dst)
 		b.StartTimer()
 
-		_ = l.switchDictionary(src, dst)
+		_ = l.switchDictionary(src, dst, mi)
 	}
 }
 

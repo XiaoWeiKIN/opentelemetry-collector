@@ -20,7 +20,6 @@ import (
 	"go.opentelemetry.io/collector/config/configtls"
 	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/confmap/confmaptest"
-	"go.opentelemetry.io/collector/confmap/xconfmap"
 	"go.opentelemetry.io/collector/exporter/exporterhelper"
 )
 
@@ -37,7 +36,7 @@ func TestUnmarshalConfig(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
 	require.NoError(t, cm.Unmarshal(&cfg))
-	require.NoError(t, xconfmap.Validate(&cfg))
+	require.NoError(t, confmap.Validate(&cfg))
 	assert.Equal(t,
 		&Config{
 			TimeoutConfig: exporterhelper.TimeoutConfig{
@@ -55,12 +54,12 @@ func TestUnmarshalConfig(t *testing.T) {
 				Sizer:        exporterhelper.RequestSizerTypeItems,
 				NumConsumers: 2,
 				QueueSize:    100000,
-				Batch: configoptional.Some(exporterhelper.BatchConfig{
-					FlushTimeout: 200 * time.Millisecond,
-					Sizer:        exporterhelper.RequestSizerTypeItems,
-					MinSize:      1000,
-					MaxSize:      10000,
-				}),
+				Batch: configoptional.Some(func() exporterhelper.BatchConfig {
+					cfg := exporterhelper.NewDefaultBatchConfig()
+					cfg.MinSize = 1000
+					cfg.MaxSize = 10000
+					return cfg
+				}()),
 			}),
 			ClientConfig: configgrpc.ClientConfig{
 				Headers: configopaque.MapList{
@@ -94,7 +93,7 @@ func TestUnmarshalDefaultBatchConfig(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
 	require.NoError(t, cm.Unmarshal(&cfg))
-	require.NoError(t, xconfmap.Validate(&cfg))
+	require.NoError(t, confmap.Validate(&cfg))
 	assert.Equal(t,
 		&Config{
 			TimeoutConfig: exporterhelper.TimeoutConfig{
@@ -105,11 +104,7 @@ func TestUnmarshalDefaultBatchConfig(t *testing.T) {
 				Sizer:        exporterhelper.RequestSizerTypeRequests,
 				QueueSize:    1000,
 				NumConsumers: 10,
-				Batch: configoptional.Some(exporterhelper.BatchConfig{
-					FlushTimeout: 200 * time.Millisecond,
-					Sizer:        exporterhelper.RequestSizerTypeItems,
-					MinSize:      8192,
-				}),
+				Batch:        configoptional.Some(exporterhelper.NewDefaultBatchConfig()),
 			}),
 			ClientConfig: configgrpc.ClientConfig{
 				Endpoint:        "1.2.3.4:1234",
@@ -142,11 +137,11 @@ func TestUnmarshalInvalidConfig(t *testing.T) {
 		},
 		{
 			name:     "invalid_timeout",
-			errorMsg: `'timeout' must be non-negative`,
+			errorMsg: `timeout value must be greater than or equal to 0`,
 		},
 		{
 			name:     "invalid_retry",
-			errorMsg: `'randomization_factor' must be within [0, 1]`,
+			errorMsg: `randomization_factor value must be greater than or equal to 0`,
 		},
 		{
 			name:     "invalid_tls",
@@ -170,7 +165,7 @@ func TestUnmarshalInvalidConfig(t *testing.T) {
 			sub, err := cm.Sub(tt.name)
 			require.NoError(t, err)
 			assert.NoError(t, sub.Unmarshal(&cfg))
-			assert.ErrorContains(t, xconfmap.Validate(cfg), tt.errorMsg)
+			assert.ErrorContains(t, confmap.Validate(cfg), tt.errorMsg)
 		})
 	}
 }
@@ -179,12 +174,12 @@ func TestValidDNSEndpoint(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig().(*Config)
 	cfg.ClientConfig.Endpoint = "dns://authority/backend.example.com:4317"
-	assert.NoError(t, xconfmap.Validate(cfg))
+	assert.NoError(t, confmap.Validate(cfg))
 }
 
 func TestValidUnixSocketEndpoint(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig().(*Config)
 	cfg.ClientConfig.Endpoint = "unix:///my/unix/socket.sock"
-	assert.NoError(t, xconfmap.Validate(cfg))
+	assert.NoError(t, confmap.Validate(cfg))
 }

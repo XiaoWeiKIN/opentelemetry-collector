@@ -32,13 +32,11 @@ require (
 	go.opentelemetry.io/collector/otelcol v0.94.1
 	go.opentelemetry.io/collector/processor v0.94.1
 	go.opentelemetry.io/collector/receiver v0.94.1
-	go.opentelemetry.io/collector v0.96.0
 )`
 	modulePrefix = "go.opentelemetry.io/collector"
 )
 
 var replaceModules = []string{
-	"",
 	"/component",
 	"/component/componentstatus",
 	"/component/componenttest",
@@ -94,6 +92,7 @@ var replaceModules = []string{
 	"/internal/sharedcomponent",
 	"/internal/telemetry",
 	"/internal/testutil",
+	"/internal/statusutil",
 	"/otelcol",
 	"/pdata",
 	"/pdata/testdata",
@@ -146,6 +145,31 @@ func TestGenerateInvalidOutputPath(t *testing.T) {
 	cfg.Distribution.OutputPath = ":/invalid"
 	err := Generate(cfg)
 	require.ErrorContains(t, err, "failed to create output path")
+}
+
+func TestOutputBinaryName(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		goos string
+		want string
+	}{
+		{
+			name: "on windows",
+			goos: "windows",
+			want: "otelcorecol.exe",
+		},
+		{
+			name: "on other OSes",
+			goos: "linux",
+			want: "otelcorecol",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("GOOS", tt.goos)
+			assert.Equal(t, tt.want, outputBinaryName("otelcorecol"))
+			assert.Equal(t, "otelcorecol.exe", outputBinaryName("otelcorecol.exe"))
+		})
+	}
 }
 
 func TestVersioning(t *testing.T) {
@@ -244,6 +268,20 @@ func TestSkipGenerate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = outputFile.Readdirnames(1)
 	require.ErrorIs(t, err, io.EOF, "skip generate should leave output directory empty")
+}
+
+func TestSkipGetModules(t *testing.T) {
+	cfg := newInitializedConfig(t)
+	cfg.Distribution.OutputPath = t.TempDir()
+	cfg.SkipGetModules = true
+	err := Generate(cfg)
+	require.NoError(t, err)
+
+	_, err = os.Stat(filepath.Join(cfg.Distribution.OutputPath, "go.mod"))
+	require.ErrorIs(t, err, os.ErrNotExist, "go.mod should not be generated when skip-get-modules is enabled")
+
+	_, err = os.Stat(filepath.Join(cfg.Distribution.OutputPath, "main.go"))
+	require.NoError(t, err, "main.go should be generated even when skip-get-modules is enabled")
 }
 
 func TestGenerateAndCompile(t *testing.T) {
@@ -393,7 +431,7 @@ func TestReplaceStatementsAreComplete(t *testing.T) {
 	// This ensures the resulting go.mod file has maximum coverage of modules
 	// that exist in the Core repository.
 	usedNames := make(map[string]int)
-	cfg.Exporters, err = parseModules([]Module{
+	cfg.Exporters, err = cfg.parseModules([]Module{
 		{
 			GoMod: "go.opentelemetry.io/collector/exporter/debugexporter v1.9999.9999",
 		},
@@ -408,7 +446,7 @@ func TestReplaceStatementsAreComplete(t *testing.T) {
 		},
 	}, usedNames)
 	require.NoError(t, err)
-	cfg.Receivers, err = parseModules([]Module{
+	cfg.Receivers, err = cfg.parseModules([]Module{
 		{
 			GoMod: "go.opentelemetry.io/collector/receiver/nopreceiver v1.9999.9999",
 		},
@@ -417,13 +455,13 @@ func TestReplaceStatementsAreComplete(t *testing.T) {
 		},
 	}, usedNames)
 	require.NoError(t, err)
-	cfg.Extensions, err = parseModules([]Module{
+	cfg.Extensions, err = cfg.parseModules([]Module{
 		{
 			GoMod: "go.opentelemetry.io/collector/extension/zpagesextension v1.9999.9999",
 		},
 	}, usedNames)
 	require.NoError(t, err)
-	cfg.Processors, err = parseModules([]Module{
+	cfg.Processors, err = cfg.parseModules([]Module{
 		{
 			GoMod: "go.opentelemetry.io/collector/processor/batchprocessor v1.9999.9999",
 		},

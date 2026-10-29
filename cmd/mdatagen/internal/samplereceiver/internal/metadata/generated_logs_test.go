@@ -32,6 +32,7 @@ func TestLogsBuilderAppendLogRecord(t *testing.T) {
 	lb := NewLogsBuilder(loadLogsBuilderConfig(t, "all_set"), settings)
 
 	rb := lb.NewResourceBuilder()
+	rb.SetHostArch("host.arch-val")
 	rb.SetMapResourceAttr(map[string]any{"key1": "map.resource.attr-val1", "key2": "map.resource.attr-val2"})
 	rb.SetOptionalResourceAttr("optional.resource.attr-val")
 	rb.SetSliceResourceAttr([]any{"slice.resource.attr-item1", "slice.resource.attr-item2"})
@@ -40,6 +41,7 @@ func TestLogsBuilderAppendLogRecord(t *testing.T) {
 	rb.SetStringResourceAttrDisableWarning("string.resource.attr_disable_warning-val")
 	rb.SetStringResourceAttrRemoveWarning("string.resource.attr_remove_warning-val")
 	rb.SetStringResourceAttrToBeRemoved("string.resource.attr_to_be_removed-val")
+	rb.SetStringResourceDisabledAttrToBeRemoved("string.resource.disabled_attr_to_be_removed-val")
 	res := rb.Emit()
 
 	// append the first log record
@@ -154,6 +156,10 @@ func TestLogsBuilder(t *testing.T) {
 				assert.Equal(t, "[WARNING] `string.resource.attr_to_be_removed` should not be enabled: This resource_attribute is deprecated and will be removed soon.", observedLogs.All()[expectedWarnings].Message)
 				expectedWarnings++
 			}
+			if tt.resAttrsSet == eventTestDataSetAll {
+				assert.Equal(t, "[WARNING] `string.resource.disabled_attr_to_be_removed` should not be enabled: This resource_attribute is deprecated and will be removed soon.", observedLogs.All()[expectedWarnings].Message)
+				expectedWarnings++
+			}
 
 			assert.Equal(t, expectedWarnings, observedLogs.Len())
 
@@ -170,6 +176,7 @@ func TestLogsBuilder(t *testing.T) {
 			lb.RecordDefaultEventToBeRenamedEvent(ctx, timestamp, "string_attr-val", true, false, WithConditionalStringAttrEventAttribute("conditional_string_attr-val"))
 
 			rb := lb.NewResourceBuilder()
+			rb.SetHostArch("host.arch-val")
 			rb.SetMapResourceAttr(map[string]any{"key1": "map.resource.attr-val1", "key2": "map.resource.attr-val2"})
 			rb.SetOptionalResourceAttr("optional.resource.attr-val")
 			rb.SetSliceResourceAttr([]any{"slice.resource.attr-item1", "slice.resource.attr-item2"})
@@ -178,6 +185,7 @@ func TestLogsBuilder(t *testing.T) {
 			rb.SetStringResourceAttrDisableWarning("string.resource.attr_disable_warning-val")
 			rb.SetStringResourceAttrRemoveWarning("string.resource.attr_remove_warning-val")
 			rb.SetStringResourceAttrToBeRemoved("string.resource.attr_to_be_removed-val")
+			rb.SetStringResourceDisabledAttrToBeRemoved("string.resource.disabled_attr_to_be_removed-val")
 			res := rb.Emit()
 			logs := lb.Emit(WithLogsResource(res))
 

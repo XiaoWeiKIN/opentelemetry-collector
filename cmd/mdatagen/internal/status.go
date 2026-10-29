@@ -47,6 +47,7 @@ type Status struct {
 	Class                string         `mapstructure:"class"`
 	Warnings             []string       `mapstructure:"warnings"`
 	Codeowners           *Codeowners    `mapstructure:"codeowners"`
+	SupportedPlatforms   []string       `mapstructure:"supported_platforms"`
 	UnsupportedPlatforms []string       `mapstructure:"unsupported_platforms"`
 	Deprecation          DeprecationMap `mapstructure:"deprecation"`
 	CodeCovComponentID   string         `mapstructure:"codecov_component_id"`
@@ -62,6 +63,7 @@ type DeprecationInfo struct {
 
 var validClasses = []string{
 	"cmd",
+	"docs",
 	"connector",
 	"converter",
 	"exporter",
@@ -124,12 +126,21 @@ func (s *Status) Validate() error {
 	if s == nil {
 		return errors.New("missing status")
 	}
+
+	if len(s.SupportedPlatforms) > 0 && len(s.UnsupportedPlatforms) > 0 {
+		errs = errors.Join(errs, errors.New(
+			"supported_platforms and unsupported_platforms cannot both be specified",
+		))
+	}
+
 	if err := s.validateClass(); err != nil {
 		errs = errors.Join(errs, err)
 	}
 
-	if err := s.Stability.Validate(); err != nil {
-		errs = errors.Join(errs, err)
+	if !slices.Contains(nonComponents, s.Class) {
+		if err := s.Stability.Validate(); err != nil {
+			errs = errors.Join(errs, err)
+		}
 	}
 	if err := s.Deprecation.Validate(s.Stability); err != nil {
 		errs = errors.Join(errs, err)

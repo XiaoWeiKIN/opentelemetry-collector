@@ -3,11 +3,11 @@
 type: sample
 display_name: Sample Receiver
 description: This receiver is used for testing purposes to check the output of mdatagen.
-reaggregation_enabled: true
+override_value_enabled: true
 scope_name: go.opentelemetry.io/collector/internal/receiver/samplereceiver
 github_project: open-telemetry/opentelemetry-collector
 
-sem_conv_version: 1.38.0
+sem_conv_version: 1.40.0
 
 feature_gates:
   - id: receiver.sample.featuregate.example
@@ -35,21 +35,65 @@ status:
   warnings:
     - Any additional information that should be brought to the consumer's attention
 
+config:
+  type: object
+  properties:
+    metrics_builder_config:
+      $ref: ./internal/metadata.metrics_builder_config
+      embed: true
+      go_struct:
+        anonymous: true
+        ignore_default: true
+    endpoint:
+      description: The endpoint to scrape metrics from.
+      type: string
+      default: "localhost:12345"
+    timeout:
+      description: Timeout for scraping metrics.
+      type: duration
+      default: 10s
+    max_results:
+      description: Maximum number of results to return per scrape.
+      type: int64
+      default: 100
+    api_token:
+      description: API token used to authenticate with the endpoint.
+      type: opaque_string
+    component_id:
+      description: Component ID used to identify this receiver instance.
+      type: component_id
+    headers:
+      description: Extra HTTP headers to attach to each request.
+      type: opaque_map
+    sample_pkg:
+      $ref: ../samplepkg.sample_config
+  required: [endpoint]
+
 resource_attributes:
+  host.arch:
+    description: The CPU architecture the host system is running on.
+    type: string
+    enabled: false
+    semantic_convention:
+      ref: host.md#host-arch
+
   map.resource.attr:
     description: Resource attribute with a map value.
     type: map
     enabled: true
+    stability: development
 
   optional.resource.attr:
     description: Explicitly disabled ResourceAttribute.
     type: string
     enabled: false
+    stability: development
 
   slice.resource.attr:
     description: Resource attribute with a slice value.
     type: slice
     enabled: true
+    stability: development
 
   string.enum.resource.attr:
     description: Resource attribute with a known set of string values.
@@ -83,6 +127,13 @@ resource_attributes:
     warnings:
       if_enabled: This resource_attribute is deprecated and will be removed soon.
 
+  string.resource.disabled_attr_to_be_removed:
+    description: Resource attribute with any string value.
+    type: string
+    enabled: false
+    warnings:
+      if_enabled: This resource_attribute is deprecated and will be removed soon.
+
 attributes:
   boolean_attr:
     description: Attribute with a boolean value.
@@ -103,6 +154,10 @@ attributes:
     description: A conditional attribute with any string value
     type: string
     requirement_level: conditionally_required
+
+  cpu:
+    description: Logical CPU number starting at 0.
+    type: string
 
   enum_attr:
     description: Attribute with a known set of string values.
@@ -131,6 +186,13 @@ attributes:
   slice_attr:
     description: Attribute with a slice value.
     type: slice
+
+  state:
+    description: Breakdown of memory usage by type.
+    type: string
+    enum: [buffered, cached, inactive, free, slab_reclaimable, slab_unreclaimable, used]
+    semantic_convention:
+      ref: system.md#system-memory-state
 
   string_attr:
     description: Attribute with any string value.
@@ -165,8 +227,10 @@ events:
 
   default.event.to_be_renamed:
     enabled: false
-    description: "[DEPRECATED] Example event disabled by default."
-    extended_documentation: The event will be renamed soon.
+    description: |
+            [DEPRECATED] Example event disabled by default.
+    extended_documentation: |
+            The event will be renamed soon.
     attributes: [string_attr, boolean_attr, boolean_attr2, conditional_string_attr]
     warnings:
       if_configured: This event is deprecated and will be renamed soon.
@@ -201,8 +265,10 @@ metrics:
 
   default.metric.to_be_removed:
     enabled: true
-    description: "[DEPRECATED] Non-monotonic delta sum double metric enabled by default."
-    extended_documentation: The metric will be removed soon.
+    description: |
+            [DEPRECATED] Non-monotonic delta sum double metric enabled by default.
+    extended_documentation: |
+            The metric will be removed soon.
     stability: deprecated
     deprecated:
       since: "1.0.0"
@@ -284,8 +350,20 @@ metrics:
       value_type: int
       monotonic: true
       aggregation_temporality: cumulative
+    attributes: [cpu]
     semantic_convention:
-      ref: https://github.com/open-telemetry/semantic-conventions/blob/v1.38.0/docs/system/system-metrics.md#metric-systemcputime
+      ref: system/system-metrics.md#metric-systemcputime
+
+  system.memory.usage:
+    enabled: true
+    description: Bytes of memory in use.
+    unit: By
+    stability: development
+    sum:
+      value_type: int
+      aggregation_temporality: cumulative
+      monotonic: false
+    attributes: [state]
 
 telemetry:
   metrics:
@@ -296,7 +374,7 @@ telemetry:
         since: "1.5.0"
         note: "This metric will be removed in favor of batch_send_trigger_size"
       description: Number of times the batch was sent due to a size trigger
-      unit: "{times}"
+      unit: "{time}"
       sum:
         value_type: int
         monotonic: true
@@ -313,7 +391,7 @@ telemetry:
       enabled: true
       description: Queue capacity - sync gauge example.
       stability: development
-      unit: "{items}"
+      unit: "{item}"
       gauge:
         value_type: int
     queue_length:
@@ -321,7 +399,7 @@ telemetry:
       stability: alpha
       description: This metric is optional and therefore not initialized in NewTelemetryBuilder.
       extended_documentation: For example this metric only exists if feature A is enabled.
-      unit: "{items}"
+      unit: "{item}"
       optional: true
       gauge:
         async: true

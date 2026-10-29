@@ -9,9 +9,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/iimos/ucum"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 
+	"go.opentelemetry.io/collector/cmd/mdatagen/internal/helpers"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/pdata/pmetric"
@@ -21,12 +23,19 @@ var reNonAlnum = regexp.MustCompile(`[^a-z0-9_]+`)
 
 type MetricName string
 
+func (mn MetricName) EmittedName() string {
+	if emittedName, _, ok := strings.Cut(string(mn), "@"); ok {
+		return emittedName
+	}
+	return string(mn)
+}
+
 func (mn MetricName) Render() (string, error) {
-	return FormatIdentifier(string(mn), true)
+	return helpers.FormatIdentifier(string(mn), true)
 }
 
 func (mn MetricName) RenderUnexported() (string, error) {
-	return FormatIdentifier(string(mn), false)
+	return helpers.FormatIdentifier(string(mn), false)
 }
 
 type Metric struct {
@@ -51,6 +60,12 @@ type Metric struct {
 
 	// Deprecation metadata for deprecated metrics
 	Deprecated *Deprecated `mapstructure:"deprecated,omitempty"`
+
+	// Migration describes dual-emission behavior controlled by feature gates.
+	Migration *MetricMigration `mapstructure:"migration"`
+	// This indicates if the metric is versioned are not. This helps with generated code.
+	// The reason for this is if the metric is versioned a metric name can be duplicated.
+	Versioned bool `mapstructure:"-"`
 }
 
 func (m *Metric) validate(metricName MetricName, semConvVersion string) error {
@@ -82,6 +97,10 @@ func (m *Metric) validate(metricName MetricName, semConvVersion string) error {
 	}
 	if m.Unit == nil {
 		errs = errors.Join(errs, errors.New(`missing metric unit`))
+	} else if *m.Unit != "" {
+		if _, err := ucum.Parse([]byte(*m.Unit)); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("invalid metric unit %q: %w", *m.Unit, err))
+		}
 	}
 	if m.Sum != nil {
 		errs = errors.Join(errs, m.Sum.Validate())
@@ -127,7 +146,8 @@ func validateSemConvMetricURL(rawURL, semConvVersion, metricName string) error {
 	if !re.MatchString(rawURL) {
 		return fmt.Errorf(
 			"invalid semantic-conventions URL: want https://github.com/open-telemetry/semantic-conventions/blob/%s/*#%s, got %q",
-			semConvVersion, anchor, rawURL)
+			semConvVersion, anchor, rawURL,
+		)
 	}
 	return nil
 }
@@ -324,17 +344,6 @@ func (d *Sum) Unmarshal(parser *confmap.Conf) error {
 	return parser.Unmarshal(d, confmap.WithIgnoreUnused())
 }
 
-// TODO: Currently, this func will not be called because of https://github.com/open-telemetry/opentelemetry-collector/issues/6671. Uncomment function and
-// add a test case to Test_LoadMetadata for file no_monotonic.yaml once the issue is solved.
-//
-// Unmarshal is a custom unmarshaler for Mono.
-// func (m *Mono) Unmarshal(parser *confmap.Conf) error {
-// 	if !parser.IsSet("monotonic") {
-// 		return errors.New("missing required field: `monotonic`")
-// 	}
-// 	return parser.Unmarshal(m)
-// }
-
 func (d *Sum) Type() string {
 	return "Sum"
 }
@@ -402,4 +411,19 @@ func (d *Histogram) Unmarshal(parser *confmap.Conf) error {
 
 func (d *Histogram) IsAsync() bool {
 	return d.Async
+}
+
+// MetricMigration defines dual-emission mapping and feature gates.
+type MetricMigration struct {
+	// To is the target metric key in the same metadata file.
+	To MetricName `mapstructure:"to"`
+	// ThroughGates lists the gates controlling emission of old/new.
+	ThroughGates MigrationGates `mapstructure:"through_gates"`
+}
+
+type MigrationGates struct {
+	// DisableOld gate, when enabled, disables old emission.
+	DisableOld FeatureGateID `mapstructure:"disable_old"`
+	// EnableNew gate, when enabled, enables new emission.
+	EnableNew FeatureGateID `mapstructure:"enable_new"`
 }

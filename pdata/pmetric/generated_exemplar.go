@@ -87,15 +87,10 @@ func (ms Exemplar) DoubleValue() float64 {
 // SetDoubleValue replaces the double associated with this Exemplar.
 func (ms Exemplar) SetDoubleValue(v float64) {
 	ms.state.AssertMutable()
-	var ov *internal.Exemplar_AsDouble
-	if !internal.UseProtoPooling.IsEnabled() {
-		ov = &internal.Exemplar_AsDouble{}
-	} else {
-		ov = internal.ProtoPoolExemplar_AsDouble.Get().(*internal.Exemplar_AsDouble)
-	}
-	ov.AsDouble = v
-	ms.orig.Value = ov
-} // IntValue returns the int associated with this Exemplar.
+	ms.orig.SetAsDouble(v)
+}
+
+// IntValue returns the int associated with this Exemplar.
 func (ms Exemplar) IntValue() int64 {
 	return ms.orig.GetAsInt()
 }
@@ -103,14 +98,7 @@ func (ms Exemplar) IntValue() int64 {
 // SetIntValue replaces the int associated with this Exemplar.
 func (ms Exemplar) SetIntValue(v int64) {
 	ms.state.AssertMutable()
-	var ov *internal.Exemplar_AsInt
-	if !internal.UseProtoPooling.IsEnabled() {
-		ov = &internal.Exemplar_AsInt{}
-	} else {
-		ov = internal.ProtoPoolExemplar_AsInt.Get().(*internal.Exemplar_AsInt)
-	}
-	ov.AsInt = v
-	ms.orig.Value = ov
+	ms.orig.SetAsInt(v)
 }
 
 // TraceID returns the traceid associated with this Exemplar.

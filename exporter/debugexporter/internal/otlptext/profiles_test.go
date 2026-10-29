@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/pprofile"
 	"go.opentelemetry.io/collector/pdata/testdata"
 )
@@ -46,6 +47,107 @@ func TestProfilesText(t *testing.T) {
 			require.NoError(t, err)
 			expected := strings.ReplaceAll(string(out), "\r", "")
 			assert.Equal(t, expected, string(got))
+		})
+	}
+}
+
+func TestProfilesTextSampleAttributeValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		setValue func(pcommon.Value)
+		expected string
+	}{
+		{name: "empty", setValue: func(_ pcommon.Value) {}, expected: "Empty()"},
+		{name: "string", setValue: func(v pcommon.Value) { v.SetStr("value") }, expected: "Str(value)"},
+		{name: "integer", setValue: func(v pcommon.Value) { v.SetInt(42) }, expected: "Int(42)"},
+		{name: "double", setValue: func(v pcommon.Value) { v.SetDouble(3.14) }, expected: "Double(3.14)"},
+		{name: "boolean", setValue: func(v pcommon.Value) { v.SetBool(true) }, expected: "Bool(true)"},
+		{
+			name:     "bytes",
+			setValue: func(v pcommon.Value) { v.SetEmptyBytes().FromRaw([]byte{1, 2, 3}) },
+			expected: "Bytes(AQID)",
+		},
+		{
+			name:     "map",
+			setValue: func(v pcommon.Value) { _ = v.SetEmptyMap().FromRaw(map[string]any{"nested": "value"}) },
+			expected: `Map({"nested":"value"})`,
+		},
+		{
+			name:     "slice",
+			setValue: func(v pcommon.Value) { _ = v.SetEmptySlice().FromRaw([]any{"value", true}) },
+			expected: `Slice(["value",true])`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			profiles := pprofile.NewProfiles()
+			dic := profiles.Dictionary()
+			dic.StringTable().Append("")
+			dic.StringTable().Append("key")
+			attribute := dic.AttributeTable().AppendEmpty()
+			attribute.SetKeyStrindex(1)
+			tt.setValue(attribute.Value())
+
+			sample := profiles.ResourceProfiles().AppendEmpty().ScopeProfiles().AppendEmpty().Profiles().AppendEmpty().Samples().AppendEmpty()
+			sample.Values().Append(100)
+			sample.AttributeIndices().Append(0)
+
+			output, err := NewTextProfilesMarshaler().MarshalProfiles(profiles)
+			require.NoError(t, err)
+			assert.Contains(t, string(output), "-> key: "+tt.expected)
+		})
+	}
+}
+
+func TestProfilesTextInvalidDictionaryIndex(t *testing.T) {
+	tests := []struct {
+		name             string
+		in               pprofile.Profiles
+		expectedContains string
+	}{
+		{
+			name: "invalid_attribute_index",
+			in: func() pprofile.Profiles {
+				profiles := pprofile.NewProfiles()
+				dic := profiles.Dictionary()
+				dic.StringTable().Append("")
+
+				profile := profiles.ResourceProfiles().AppendEmpty().ScopeProfiles().AppendEmpty().Profiles().AppendEmpty()
+				sample := profile.Samples().AppendEmpty()
+				sample.Values().Append(100)
+				// Attribute index 99 is out of bounds (attribute table is empty)
+				sample.AttributeIndices().Append(99)
+				return profiles
+			}(),
+			expectedContains: "[Missing Dictionary AttributeTable Item #99]",
+		},
+		{
+			name: "invalid_string_index",
+			in: func() pprofile.Profiles {
+				profiles := pprofile.NewProfiles()
+				dic := profiles.Dictionary()
+				dic.StringTable().Append("")
+
+				a := dic.AttributeTable().AppendEmpty()
+				// KeyStrindex 99 is out of bounds
+				a.SetKeyStrindex(99)
+				a.Value().SetStr("value1")
+
+				profile := profiles.ResourceProfiles().AppendEmpty().ScopeProfiles().AppendEmpty().Profiles().AppendEmpty()
+				sample := profile.Samples().AppendEmpty()
+				sample.Values().Append(100)
+				sample.AttributeIndices().Append(0)
+				return profiles
+			}(),
+			expectedContains: "[Missing Dictionary Key String Item #99]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NewTextProfilesMarshaler().MarshalProfiles(tt.in)
+			require.NoError(t, err)
+			assert.Contains(t, string(got), tt.expectedContains)
 		})
 	}
 }

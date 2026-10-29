@@ -255,6 +255,19 @@ func TestValue_CopyTo(t *testing.T) {
 	assert.Equal(t, internal.GenTestAnyValue(), dest.getOrig())
 }
 
+func TestValue_CopyToBytesIsDeepCopy(t *testing.T) {
+	src := NewValueBytes()
+	src.Bytes().FromRaw([]byte{1, 2, 3})
+
+	dest := NewValueEmpty()
+	src.CopyTo(dest)
+
+	// mutating the copy must not affect the source, since CopyTo is a deep copy.
+	dest.Bytes().SetAt(0, 99)
+	assert.Equal(t, []byte{1, 2, 3}, src.Bytes().AsRaw())
+	assert.Equal(t, []byte{99, 2, 3}, dest.Bytes().AsRaw())
+}
+
 func TestSliceWithNilValues(t *testing.T) {
 	origWithNil := []internal.AnyValue{
 		{},
@@ -303,9 +316,19 @@ func TestValueAsString(t *testing.T) {
 			expected: "9e-9",
 		},
 		{
-			name:     "bad float64",
+			name:     "float64_positive_infinity",
 			input:    NewValueDouble(math.Inf(1)),
-			expected: "json: unsupported value: +Inf",
+			expected: "Infinity",
+		},
+		{
+			name:     "float64_negative_infinity",
+			input:    NewValueDouble(math.Inf(-1)),
+			expected: "-Infinity",
+		},
+		{
+			name:     "float64_nan",
+			input:    NewValueDouble(math.NaN()),
+			expected: "NaN",
 		},
 		{
 			name:     "boolean",
@@ -341,6 +364,26 @@ func TestValueAsString(t *testing.T) {
 			name:     "bytes",
 			input:    generateTestValueBytes(),
 			expected: base64.StdEncoding.EncodeToString([]byte("String bytes")),
+		},
+		{
+			name: "map_with_html_characters",
+			input: func() Value {
+				v := NewValueMap()
+				v.Map().PutStr("key", "<a href=\"x\">&y</a>")
+				return v
+			}(),
+			expected: `{"key":"<a href=\"x\">&y</a>"}`,
+		},
+		{
+			name: "slice_with_html_characters",
+			input: func() Value {
+				v := NewValueSlice()
+				v.Slice().AppendEmpty().SetStr("<")
+				v.Slice().AppendEmpty().SetStr(">")
+				v.Slice().AppendEmpty().SetStr("&")
+				return v
+			}(),
+			expected: `["<",">","&"]`,
 		},
 	}
 	for _, tt := range tests {
@@ -522,20 +565,20 @@ func TestNewValueFromRaw(t *testing.T) {
 		{
 			name:  "slice",
 			input: []any{"v1", "v2"},
-			expected: (func() Value {
+			expected: func() Value {
 				s := NewValueSlice()
 				assert.NoError(t, s.Slice().FromRaw([]any{"v1", "v2"}))
 				return s
-			})(),
+			}(),
 		},
 		{
 			name:  "empty slice",
 			input: []any{},
-			expected: (func() Value {
+			expected: func() Value {
 				s := NewValueSlice()
 				assert.NoError(t, s.Slice().FromRaw([]any{}))
 				return s
-			})(),
+			}(),
 		},
 	}
 	for _, tt := range tests {

@@ -15,7 +15,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata/metricdatatest"
-	semconv "go.opentelemetry.io/otel/semconv/v1.38.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.40.0"
+	"go.opentelemetry.io/otel/trace"
 	grpccodes "google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
@@ -25,6 +26,7 @@ import (
 	"go.opentelemetry.io/collector/exporter"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/experr"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/metadatatest"
+	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/request"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/requesttest"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/sender"
@@ -37,6 +39,24 @@ var (
 
 	errFake = errors.New("errFake")
 )
+
+func newTestObsReportSender[K request.Request](
+	t *testing.T,
+	set exporter.Settings,
+	signal pipeline.Signal,
+	extraAttrs []attribute.KeyValue,
+	batchEnabled bool,
+	tracer trace.Tracer,
+	next sender.Sender[K],
+) (sender.Sender[K], error) {
+	t.Helper()
+	obsMetrics, err := queue.NewExporterObsMetrics(set.TelemetrySettings, set.ID, signal, extraAttrs)
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(obsMetrics.Shutdown)
+	return newObsReportSender(set, signal, obsMetrics, batchEnabled, tracer, next), nil
+}
 
 func TestExportTraceFailureAttributes(t *testing.T) {
 	tests := []struct {
@@ -94,11 +114,20 @@ func TestExportTraceFailureAttributes(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			telemetry := componenttest.NewTelemetry()
-			t.Cleanup(func() { require.NoError(t, telemetry.Shutdown(context.Background())) })
+			telemetrySettings := telemetry.NewTelemetrySettings()
 
-			obsrep, err := newObsReportSender(
-				exporter.Settings{ID: exporterID, TelemetrySettings: telemetry.NewTelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()},
+			obsrep, err := newTestObsReportSender(t,
+				exporter.Settings{
+					ID:                exporterID,
+					TelemetrySettings: telemetrySettings,
+					BuildInfo:         component.NewDefaultBuildInfo(),
+				},
 				pipeline.SignalTraces,
+				nil,
+				false,
+				telemetrySettings.TracerProvider.Tracer(
+					"go.opentelemetry.io/collector/exporter/exporterhelper",
+				),
 				sender.NewSender(func(context.Context, request.Request) error {
 					return tt.err
 				}),
@@ -167,12 +196,25 @@ func TestExportTraceFailureAttributesGRPCError(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			telemetry := componenttest.NewTelemetry()
-			t.Cleanup(func() { require.NoError(t, telemetry.Shutdown(context.Background())) })
+			t.Cleanup(func() {
+				require.NoError(t, telemetry.Shutdown(context.Background()))
+			})
 
+			telemetrySettings := telemetry.NewTelemetrySettings()
 			grpcErr := status.Error(tt.grpcCode, "test error")
-			obsrep, err := newObsReportSender(
-				exporter.Settings{ID: exporterID, TelemetrySettings: telemetry.NewTelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()},
+
+			obsrep, err := newTestObsReportSender(t,
+				exporter.Settings{
+					ID:                exporterID,
+					TelemetrySettings: telemetrySettings,
+					BuildInfo:         component.NewDefaultBuildInfo(),
+				},
 				pipeline.SignalTraces,
+				nil,
+				false,
+				telemetrySettings.TracerProvider.Tracer(
+					"go.opentelemetry.io/collector/exporter/exporterhelper",
+				),
 				sender.NewSender(func(context.Context, request.Request) error {
 					return grpcErr
 				}),
@@ -202,16 +244,34 @@ func TestExportTraceFailureAttributesGRPCError(t *testing.T) {
 
 func TestExportTraceDataOp(t *testing.T) {
 	tt := componenttest.NewTelemetry()
-	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
+	t.Cleanup(func() {
+		require.NoError(t, tt.Shutdown(context.Background()))
+	})
 
-	parentCtx, parentSpan := tt.NewTelemetrySettings().TracerProvider.Tracer("test").Start(context.Background(), t.Name())
+	telemetrySettings := tt.NewTelemetrySettings()
+
+	parentCtx, parentSpan := telemetrySettings.TracerProvider.
+		Tracer("test").
+		Start(context.Background(), t.Name())
 	defer parentSpan.End()
 
 	var exporterErr error
-	obsrep, err := newObsReportSender(
-		exporter.Settings{ID: exporterID, TelemetrySettings: tt.NewTelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()},
+
+	obsrep, err := newTestObsReportSender(t,
+		exporter.Settings{
+			ID:                exporterID,
+			TelemetrySettings: telemetrySettings,
+			BuildInfo:         component.NewDefaultBuildInfo(),
+		},
 		pipeline.SignalTraces,
-		sender.NewSender(func(context.Context, request.Request) error { return exporterErr }),
+		nil,
+		false,
+		telemetrySettings.TracerProvider.Tracer(
+			"go.opentelemetry.io/collector/exporter/exporterhelper",
+		),
+		sender.NewSender(func(context.Context, request.Request) error {
+			return exporterErr
+		}),
 	)
 	require.NoError(t, err)
 
@@ -251,7 +311,8 @@ func TestExportTraceDataOp(t *testing.T) {
 		[]metricdata.DataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String("exporter", exporterID.String())),
+					attribute.String("exporter", exporterID.String()),
+				),
 				Value: int64(sentSpans),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -276,16 +337,34 @@ func TestExportTraceDataOp(t *testing.T) {
 
 func TestExportMetricsOp(t *testing.T) {
 	tt := componenttest.NewTelemetry()
-	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
+	t.Cleanup(func() {
+		require.NoError(t, tt.Shutdown(context.Background()))
+	})
 
-	parentCtx, parentSpan := tt.NewTelemetrySettings().TracerProvider.Tracer("test").Start(context.Background(), t.Name())
+	telemetrySettings := tt.NewTelemetrySettings()
+
+	parentCtx, parentSpan := telemetrySettings.TracerProvider.
+		Tracer("test").
+		Start(context.Background(), t.Name())
 	defer parentSpan.End()
 
 	var exporterErr error
-	obsrep, err := newObsReportSender(
-		exporter.Settings{ID: exporterID, TelemetrySettings: tt.NewTelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()},
+
+	obsrep, err := newTestObsReportSender(t,
+		exporter.Settings{
+			ID:                exporterID,
+			TelemetrySettings: telemetrySettings,
+			BuildInfo:         component.NewDefaultBuildInfo(),
+		},
 		pipeline.SignalMetrics,
-		sender.NewSender(func(context.Context, request.Request) error { return exporterErr }),
+		nil,
+		false,
+		telemetrySettings.TracerProvider.Tracer(
+			"go.opentelemetry.io/collector/exporter/exporterhelper",
+		),
+		sender.NewSender(func(context.Context, request.Request) error {
+			return exporterErr
+		}),
 	)
 	require.NoError(t, err)
 
@@ -325,7 +404,8 @@ func TestExportMetricsOp(t *testing.T) {
 		[]metricdata.DataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String("exporter", exporterID.String())),
+					attribute.String("exporter", exporterID.String()),
+				),
 				Value: int64(sentMetricPoints),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -350,16 +430,34 @@ func TestExportMetricsOp(t *testing.T) {
 
 func TestExportLogsOp(t *testing.T) {
 	tt := componenttest.NewTelemetry()
-	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
+	t.Cleanup(func() {
+		require.NoError(t, tt.Shutdown(context.Background()))
+	})
 
-	parentCtx, parentSpan := tt.NewTelemetrySettings().TracerProvider.Tracer("test").Start(context.Background(), t.Name())
+	telemetrySettings := tt.NewTelemetrySettings()
+
+	parentCtx, parentSpan := telemetrySettings.TracerProvider.
+		Tracer("test").
+		Start(context.Background(), t.Name())
 	defer parentSpan.End()
 
 	var exporterErr error
-	obsrep, err := newObsReportSender(
-		exporter.Settings{ID: exporterID, TelemetrySettings: tt.NewTelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()},
+
+	obsrep, err := newTestObsReportSender(t,
+		exporter.Settings{
+			ID:                exporterID,
+			TelemetrySettings: telemetrySettings,
+			BuildInfo:         component.NewDefaultBuildInfo(),
+		},
 		pipeline.SignalLogs,
-		sender.NewSender(func(context.Context, request.Request) error { return exporterErr }),
+		nil,
+		false,
+		telemetrySettings.TracerProvider.Tracer(
+			"go.opentelemetry.io/collector/exporter/exporterhelper",
+		),
+		sender.NewSender(func(context.Context, request.Request) error {
+			return exporterErr
+		}),
 	)
 	require.NoError(t, err)
 
@@ -399,7 +497,8 @@ func TestExportLogsOp(t *testing.T) {
 		[]metricdata.DataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String("exporter", exporterID.String())),
+					attribute.String("exporter", exporterID.String()),
+				),
 				Value: int64(sentLogRecords),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -546,16 +645,34 @@ func TestExtractFailureAttributes(t *testing.T) {
 
 func TestExportProfilesOp(t *testing.T) {
 	tt := componenttest.NewTelemetry()
-	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
+	t.Cleanup(func() {
+		require.NoError(t, tt.Shutdown(context.Background()))
+	})
 
-	parentCtx, parentSpan := tt.NewTelemetrySettings().TracerProvider.Tracer("test").Start(context.Background(), t.Name())
+	telemetrySettings := tt.NewTelemetrySettings()
+
+	parentCtx, parentSpan := telemetrySettings.TracerProvider.
+		Tracer("test").
+		Start(context.Background(), t.Name())
 	defer parentSpan.End()
 
 	var exporterErr error
-	obsrep, err := newObsReportSender(
-		exporter.Settings{ID: exporterID, TelemetrySettings: tt.NewTelemetrySettings(), BuildInfo: component.NewDefaultBuildInfo()},
+
+	obsrep, err := newTestObsReportSender(t,
+		exporter.Settings{
+			ID:                exporterID,
+			TelemetrySettings: telemetrySettings,
+			BuildInfo:         component.NewDefaultBuildInfo(),
+		},
 		xpipeline.SignalProfiles,
-		sender.NewSender(func(context.Context, request.Request) error { return exporterErr }),
+		nil,
+		false,
+		telemetrySettings.TracerProvider.Tracer(
+			"go.opentelemetry.io/collector/exporter/exporterhelper",
+		),
+		sender.NewSender(func(context.Context, request.Request) error {
+			return exporterErr
+		}),
 	)
 	require.NoError(t, err)
 
@@ -595,7 +712,8 @@ func TestExportProfilesOp(t *testing.T) {
 		[]metricdata.DataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String("exporter", exporterID.String())),
+					attribute.String("exporter", exporterID.String()),
+				),
 				Value: int64(sentProfileRecords),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -621,4 +739,125 @@ func TestExportProfilesOp(t *testing.T) {
 type testParams struct {
 	items int
 	err   error
+}
+
+func TestObsReportSenderBatchSizeDisabled(t *testing.T) {
+	tt := componenttest.NewTelemetry()
+	t.Cleanup(func() {
+		require.NoError(t, tt.Shutdown(context.Background()))
+	})
+
+	telemetrySettings := tt.NewTelemetrySettings()
+
+	obsrep, err := newTestObsReportSender(t,
+		exporter.Settings{
+			ID:                exporterID,
+			TelemetrySettings: telemetrySettings,
+			BuildInfo:         component.NewDefaultBuildInfo(),
+		},
+		pipeline.SignalLogs,
+		nil,
+		false,
+		telemetrySettings.TracerProvider.Tracer(
+			"go.opentelemetry.io/collector/exporter/exporterhelper",
+		),
+		sender.NewSender(func(context.Context, request.Request) error {
+			return nil
+		}),
+	)
+	require.NoError(t, err)
+	require.NoError(t, obsrep.Send(context.Background(), &requesttest.FakeRequest{Items: 2, Bytes: 100}))
+
+	_, err = tt.GetMetric("otelcol_exporter_queue_batch_send_size")
+	require.Error(t, err)
+	_, err = tt.GetMetric("otelcol_exporter_queue_batch_send_size_bytes")
+	require.Error(t, err)
+}
+
+func TestObsReportSenderLogsBatchSize(t *testing.T) {
+	testBatchSize(t, pipeline.SignalLogs, &requesttest.FakeRequest{Items: 2, Bytes: 100})
+}
+
+func TestObsReportSenderTracesBatchSize(t *testing.T) {
+	testBatchSize(t, pipeline.SignalTraces, &requesttest.FakeRequest{Items: 12, Bytes: 200})
+}
+
+func TestObsReportSenderMetricsBatchSize(t *testing.T) {
+	testBatchSize(t, pipeline.SignalMetrics, &requesttest.FakeRequest{Items: 22, Bytes: 300})
+}
+
+func TestObsReportSenderProfilesBatchSize(t *testing.T) {
+	testBatchSize(t, xpipeline.SignalProfiles, &requesttest.FakeRequest{Items: 22, Bytes: 300})
+}
+
+func testBatchSize(t *testing.T, signal pipeline.Signal, req *requesttest.FakeRequest) {
+	tt := componenttest.NewTelemetry()
+	t.Cleanup(func() {
+		require.NoError(t, tt.Shutdown(context.Background()))
+	})
+
+	telemetrySettings := tt.NewTelemetrySettings()
+
+	obsrep, err := newTestObsReportSender(t,
+		exporter.Settings{
+			ID:                exporterID,
+			TelemetrySettings: telemetrySettings,
+			BuildInfo:         component.NewDefaultBuildInfo(),
+		},
+		signal,
+		nil,
+		true,
+		telemetrySettings.TracerProvider.Tracer(
+			"go.opentelemetry.io/collector/exporter/exporterhelper",
+		),
+		sender.NewSender(func(context.Context, request.Request) error {
+			return nil
+		}),
+	)
+	require.NoError(t, err)
+	require.NoError(t, obsrep.Send(context.Background(), req))
+
+	attrs := attribute.NewSet(attribute.String(ExporterKey, exporterID.String()))
+	bounds := []float64{10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000, 100000}
+
+	itemsBuckets := bucketCountsFor(int64(req.Items), bounds)
+	metadatatest.AssertEqualExporterQueueBatchSendSize(t, tt,
+		[]metricdata.HistogramDataPoint[int64]{
+			{
+				Attributes:   attrs,
+				Count:        1,
+				Bounds:       bounds,
+				BucketCounts: itemsBuckets,
+				Min:          metricdata.NewExtrema(int64(req.Items)),
+				Max:          metricdata.NewExtrema(int64(req.Items)),
+				Sum:          int64(req.Items),
+			},
+		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
+
+	bytesBounds := []float64{128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608, 16777216}
+	bytesBuckets := bucketCountsFor(int64(req.Bytes), bytesBounds)
+	metadatatest.AssertEqualExporterQueueBatchSendSizeBytes(t, tt,
+		[]metricdata.HistogramDataPoint[int64]{
+			{
+				Attributes:   attrs,
+				Count:        1,
+				Bounds:       bytesBounds,
+				BucketCounts: bytesBuckets,
+				Min:          metricdata.NewExtrema(int64(req.Bytes)),
+				Max:          metricdata.NewExtrema(int64(req.Bytes)),
+				Sum:          int64(req.Bytes),
+			},
+		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
+}
+
+func bucketCountsFor(v int64, bounds []float64) []uint64 {
+	counts := make([]uint64, len(bounds)+1)
+	for i, b := range bounds {
+		if float64(v) <= b {
+			counts[i] = 1
+			return counts
+		}
+	}
+	counts[len(bounds)] = 1
+	return counts
 }

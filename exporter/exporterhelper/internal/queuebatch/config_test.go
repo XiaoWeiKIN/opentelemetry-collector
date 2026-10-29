@@ -13,56 +13,56 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/config/configoptional"
+	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/confmap/confmaptest"
-	"go.opentelemetry.io/collector/confmap/xconfmap"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/request"
 )
 
 func TestConfig_Validate(t *testing.T) {
 	cfg := newTestConfig()
-	require.NoError(t, xconfmap.Validate(cfg))
+	require.NoError(t, confmap.Validate(cfg))
 
 	cfg.NumConsumers = 0
-	require.EqualError(t, xconfmap.Validate(cfg), "`num_consumers` must be positive")
+	require.EqualError(t, confmap.Validate(cfg), "`num_consumers` must be positive")
 
 	cfg = newTestConfig()
 	cfg.QueueSize = 0
-	require.EqualError(t, xconfmap.Validate(cfg), "`queue_size` must be positive")
+	require.EqualError(t, confmap.Validate(cfg), "`queue_size` must be positive")
 
 	cfg = newTestConfig()
 	cfg.QueueSize = 0
-	require.EqualError(t, xconfmap.Validate(cfg), "`queue_size` must be positive")
+	require.EqualError(t, confmap.Validate(cfg), "`queue_size` must be positive")
 
 	storageID := component.MustNewID("test")
 	cfg = newTestConfig()
 	cfg.WaitForResult = true
 	cfg.StorageID = &storageID
-	require.EqualError(t, xconfmap.Validate(cfg), "`wait_for_result` is not supported with a persistent queue configured with `storage`")
+	require.EqualError(t, confmap.Validate(cfg), "`wait_for_result` is not supported with a persistent queue configured with `storage`")
 
 	cfg = newTestConfig()
 	cfg.QueueSize = cfg.Batch.Get().MinSize - 1
-	require.EqualError(t, xconfmap.Validate(cfg), "`min_size` must be less than or equal to `queue_size`")
+	require.EqualError(t, confmap.Validate(cfg), "`min_size` must be less than or equal to `queue_size`")
 
 	cfg = newTestConfig()
 	cfg.Batch.Get().Sizer = request.SizerType{}
-	require.EqualError(t, xconfmap.Validate(cfg), "batch: `batch` supports only `items` or `bytes` sizer, found \"\"")
+	require.EqualError(t, confmap.Validate(cfg), "batch: `batch` supports only `items` or `bytes` sizer, found \"\"")
 
 	cfg = newTestConfig()
 	cfg.Sizer = request.SizerTypeBytes
-	require.NoError(t, xconfmap.Validate(cfg))
+	require.NoError(t, confmap.Validate(cfg))
 }
 
 func TestBatchConfig_Validate_MetadataKeys(t *testing.T) {
 	t.Run("no duplicates - valid", func(t *testing.T) {
 		cfg := newTestBatchConfig()
 		cfg.Partition.MetadataKeys = []string{"key1", "key2", "key3"}
-		require.NoError(t, xconfmap.Validate(cfg))
+		require.NoError(t, confmap.Validate(cfg))
 	})
 
 	t.Run("duplicate keys mixed case - invalid", func(t *testing.T) {
 		cfg := newTestBatchConfig()
 		cfg.Partition.MetadataKeys = []string{"Key1", "kEy1", "key2"}
-		err := xconfmap.Validate(cfg)
+		err := confmap.Validate(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate entry in metadata_keys")
 		assert.Contains(t, err.Error(), "key1")
@@ -72,53 +72,90 @@ func TestBatchConfig_Validate_MetadataKeys(t *testing.T) {
 	t.Run("empty metadata_keys - valid", func(t *testing.T) {
 		cfg := newTestBatchConfig()
 		cfg.Partition.MetadataKeys = []string{}
-		require.NoError(t, xconfmap.Validate(cfg))
+		require.NoError(t, confmap.Validate(cfg))
 	})
 
 	t.Run("nil metadata_keys - valid", func(t *testing.T) {
 		cfg := newTestBatchConfig()
 		cfg.Partition.MetadataKeys = nil
-		require.NoError(t, xconfmap.Validate(cfg))
+		require.NoError(t, confmap.Validate(cfg))
 	})
 
 	t.Run("multiple duplicates - reports first duplicate", func(t *testing.T) {
 		cfg := newTestBatchConfig()
 		cfg.Partition.MetadataKeys = []string{"key1", "key2", "key1", "key2"}
-		err := xconfmap.Validate(cfg)
+		err := confmap.Validate(cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "duplicate entry in metadata_keys")
 		assert.Contains(t, err.Error(), "key1")
 	})
+
+	t.Run("positive idle_timeout - valid", func(t *testing.T) {
+		cfg := newTestBatchConfig()
+		cfg.Partition.IdleTimeout = 30 * time.Second
+		require.NoError(t, confmap.Validate(cfg))
+	})
+
+	t.Run("zero idle_timeout - invalid", func(t *testing.T) {
+		cfg := newTestBatchConfig()
+		cfg.Partition.IdleTimeout = 0
+		err := confmap.Validate(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "`idle_timeout` must be positive")
+	})
+
+	t.Run("negative idle_timeout - invalid", func(t *testing.T) {
+		cfg := newTestBatchConfig()
+		cfg.Partition.IdleTimeout = -1 * time.Second
+		err := confmap.Validate(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "`idle_timeout` must be positive")
+	})
+}
+
+func TestNewDefaultBatchConfig(t *testing.T) {
+	cfg := NewDefaultBatchConfig()
+	require.NoError(t, confmap.Validate(cfg))
+	assert.Equal(t, 10000, cfg.Partition.CacheSize)
+	assert.Equal(t, 90*time.Second, cfg.Partition.IdleTimeout)
 }
 
 func TestBatchConfig_Validate(t *testing.T) {
 	cfg := newTestBatchConfig()
-	require.NoError(t, xconfmap.Validate(cfg))
+	require.NoError(t, confmap.Validate(cfg))
 
 	cfg = newTestBatchConfig()
 	cfg.FlushTimeout = 0
-	require.EqualError(t, xconfmap.Validate(cfg), "`flush_timeout` must be positive, found 0")
+	require.EqualError(t, confmap.Validate(cfg), "`flush_timeout` must be positive, found 0")
 
 	cfg = newTestBatchConfig()
 	cfg.MinSize = -1
-	require.EqualError(t, xconfmap.Validate(cfg), "`min_size` must be non-negative, found -1")
+	require.EqualError(t, confmap.Validate(cfg), "`min_size` must be non-negative, found -1")
 
 	cfg = newTestBatchConfig()
 	cfg.MaxSize = -1
-	require.EqualError(t, xconfmap.Validate(cfg), "`max_size` must be non-negative, found -1")
+	require.EqualError(t, confmap.Validate(cfg), "`max_size` must be non-negative, found -1")
 
 	cfg = newTestBatchConfig()
 	cfg.Sizer = request.SizerTypeRequests
-	require.EqualError(t, xconfmap.Validate(cfg), "`batch` supports only `items` or `bytes` sizer, found \"requests\"")
+	require.EqualError(t, confmap.Validate(cfg), "`batch` supports only `items` or `bytes` sizer, found \"requests\"")
 
 	cfg = newTestBatchConfig()
 	cfg.Sizer = request.SizerType{}
-	require.EqualError(t, xconfmap.Validate(cfg), "`batch` supports only `items` or `bytes` sizer, found \"\"")
+	require.EqualError(t, confmap.Validate(cfg), "`batch` supports only `items` or `bytes` sizer, found \"\"")
 
 	cfg = newTestBatchConfig()
 	cfg.MinSize = 2048
 	cfg.MaxSize = 1024
-	require.EqualError(t, xconfmap.Validate(cfg), "`max_size` (1024) must be greater or equal to `min_size` (2048)")
+	require.EqualError(t, confmap.Validate(cfg), "`max_size` (1024) must be greater or equal to `min_size` (2048)")
+
+	cfg = newTestBatchConfig()
+	cfg.Partition.CacheSize = -1
+	require.EqualError(t, confmap.Validate(cfg), "partition: `cache_size` must be positive, found -1")
+
+	cfg = newTestBatchConfig()
+	cfg.Partition.CacheSize = 0
+	require.EqualError(t, confmap.Validate(cfg), "partition: `cache_size` must be positive, found 0")
 }
 
 func newTestBatchConfig() BatchConfig {
@@ -127,6 +164,7 @@ func newTestBatchConfig() BatchConfig {
 		Sizer:        request.SizerTypeItems,
 		MinSize:      2048,
 		MaxSize:      0,
+		Partition:    NewDefaultPartitionConfig(),
 	}
 }
 
@@ -136,11 +174,7 @@ func TestUnmarshal(t *testing.T) {
 			Sizer:        request.SizerTypeRequests,
 			NumConsumers: 10,
 			QueueSize:    1_000,
-			Batch: configoptional.Default(BatchConfig{
-				FlushTimeout: 200 * time.Millisecond,
-				Sizer:        request.SizerTypeItems,
-				MinSize:      8192,
-			}),
+			Batch:        configoptional.Default(NewDefaultBatchConfig()),
 		})
 	}
 	tests := []struct {
@@ -175,8 +209,9 @@ func TestUnmarshal(t *testing.T) {
 				cfg.Get().Batch = configoptional.Some(BatchConfig{
 					FlushTimeout: 200 * time.Millisecond,
 					// Sizer has been overridden by parent sizer
-					Sizer:   request.SizerTypeBytes,
-					MinSize: 100,
+					Sizer:     request.SizerTypeBytes,
+					MinSize:   100,
+					Partition: NewDefaultPartitionConfig(),
 				})
 				return cfg
 			},
@@ -189,8 +224,9 @@ func TestUnmarshal(t *testing.T) {
 				cfg.Get().Batch = configoptional.Some(BatchConfig{
 					FlushTimeout: 200 * time.Millisecond,
 					// Sizer has NOT been overridden by parent sizer
-					Sizer:   request.SizerTypeItems,
-					MinSize: 100,
+					Sizer:     request.SizerTypeItems,
+					MinSize:   100,
+					Partition: NewDefaultPartitionConfig(),
 				})
 				return cfg
 			},
@@ -199,6 +235,16 @@ func TestUnmarshal(t *testing.T) {
 			path: "batch_unset.yaml",
 			// Batch remains unset, sizer override does not apply.
 			expectedCfg: newBaseCfg,
+		},
+		{
+			path: "batch_disabled_explicit_sizer.yaml",
+			// Batch is explicitly disabled. Sizer inheritance must not
+			// panic and Batch must remain absent.
+			expectedCfg: func() configoptional.Optional[Config] {
+				cfg := newBaseCfg()
+				cfg.Get().Batch = configoptional.None[BatchConfig]()
+				return cfg
+			},
 		},
 	}
 
@@ -215,7 +261,7 @@ func TestUnmarshal(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedCfg(), cfg)
-			assert.NoError(t, xconfmap.Validate(cfg))
+			assert.NoError(t, confmap.Validate(cfg))
 		})
 	}
 }

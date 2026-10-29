@@ -15,8 +15,6 @@ type FieldInterface interface {
 
 	GenTestEncodingValues() string
 
-	GenPool() string
-
 	GenDelete() string
 
 	GenCopy() string
@@ -216,6 +214,7 @@ func (pf *Field) getTemplateFields() map[string]any {
 		"oneOfMessageName":  pf.OneOfMessageName,
 		"repeated":          pf.Repeated,
 		"nullable":          pf.Nullable,
+		"isBytes":           pf.Type == TypeBytes,
 		"bitSize":           bitSize,
 		"goType":            pf.GoType(),
 		"defaultValue":      pf.DefaultValue(),

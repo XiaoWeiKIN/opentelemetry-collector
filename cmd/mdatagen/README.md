@@ -58,6 +58,326 @@ Below are some more examples that can be used for reference:
 
 You can run `cd cmd/mdatagen && $(GOCMD) install .` to install the `mdatagen` tool in `GOBIN` and then run `mdatagen metadata.yaml` to generate documentation for a specific component or you can run `make generate` to generate documentation for all components.
 
+### Exporter queue/batch sender defaults
+
+Declaring a `sending_queue` field in `metadata.yaml` is **opt-in**: an
+exporter that omits it entirely is treated as not yet audited as part of
+the [batching migration RFC](../../docs/rfcs/batching-migration.md), and
+mdatagen generates no `sending_queue`-related code or documentation for
+it. Exporters opt in to Phase 2 of that migration one at a time by adding
+an explicit `sending_queue` block, even just `support: default`.
+
+The exporter config must declare exactly one named, top-level field with
+type `configoptional.Optional[exporterhelper.QueueBatchConfig]` and the
+`mapstructure:"sending_queue"` tag. Nested or squashed queue fields are not
+supported.
+
+```yaml
+sending_queue:
+  support: has_overrides
+  overrides:
+    enabled: true
+    num_consumers: 1
+    batch:
+      enabled: true
+```
+
+#### default
+
+The default setting can be set explicitly:
+
+```yaml
+sending_queue:
+  support: default
+```
+
+> [!NOTE]
+> The default behavior uses the `pkg.exporterhelper.queueBatchEnabled`
+> feature flag to determine the `batch::enabled` value. This value is
+> changing to `true` as documented in the [batching migration RFC](../../docs/rfcs/batching-migration.md).
+
+#### has_overrides
+
+When set to `has_overrides`, overrides are provided in the `overrides`
+field, for example:
+
+```yaml
+sending_queue:
+  support: has_overrides
+  rationale: "Batching is disabled because ..."
+  overrides:
+    enabled: true
+    batch:
+      enabled: false
+```
+
+Overrides are considered relative to the post-migration default.  The
+`overrides::enabled` and `overrides::batch::enabled` fields are
+explicitly required. Set `overrides::batch::enabled` to false to
+disable batching before or after the [batching
+migration](../../docs/rfcs/batching-migration.md).
+
+#### omitted
+
+When set to `omitted`, the sending queue is not used in the exporter.
+
+```yaml
+sending_queue:
+  support: omitted
+  rationale: "The protocol requires special support ..."
+```
+
+Unlike an undeclared `sending_queue` field, an explicit `support: omitted`
+requires a `rationale` and generates documentation recording that
+decision.
+
+#### Auditing a repository's exporters (opt-out mode)
+
+Set the `MDATAGEN_SENDING_QUEUE_OPT_OUT` environment variable to a truthy
+value (e.g. `MDATAGEN_SENDING_QUEUE_OPT_OUT=true make generate`) to flip the
+undeclared-`sending_queue` default from `omitted` (opt-in, skip
+generation) to `default` (opt-out, generate the standard default for every
+exporter). This is intended for developers doing the Phase 2 audit across
+a whole repository: it materializes generated code and documentation for
+every exporter without first hand-editing every `metadata.yaml`, so
+overrides can be added only where the standard default is wrong. This
+environment variable is temporary; it is expected to be removed once the
+Phase 2 audit completes, at which point the opt-out behavior becomes the
+permanent, hardcoded default.
+
+### Central configuration file
+
+`mdatagen` supports a repository-level configuration file named `.mdatagen.yaml`.
+
+This is used for skipping validation and configuring project-level hooks.
+
+### Stability
+
+`mdatagen check-stability --profile <coverage profile> metadata.yaml` checks a component against the stability criteria.
+
+#### Code coverage targets
+
+The `stability` section sets a minimum coverage target per stability level:
+
+```yaml
+stability:
+  coverage:
+    beta: 60
+    stable: 80
+```
+
+### Component Config Documentation
+
+The metadata generator supports automatic generation of configuration schemas for components.
+This generates JSON Schema files that enable IDE autocompletion, validation, and documentation for component configuration.
+In the future it will also generate Go config structs and human-readable documentation for configuration options
+
+To define a configuration schema, add a `config` section to your `metadata.yaml`:
+
+```yaml
+type: myreceiver
+status:
+  class: receiver
+  stability:
+    beta: [metrics, traces]
+
+config:
+  type: object
+  properties:
+    endpoint:
+      type: string
+      description: The endpoint to listen on
+      default: "localhost:4317"
+    timeout:
+      type: duration
+      description: Request timeout duration
+      default: "30s"
+    tls:
+      $ref: go.opentelemetry.io/collector/config/configtls.server_config
+  required: [endpoint]
+```
+
+The `config` section uses Go-centric types directly in the `type` field, and also supports:
+
+- **Validation constraints**: minLength, maxLength, pattern, minimum, maximum, enum, etc.
+- **References**: Internal (`$ref: definition_name`), external (`$ref: package.path.type`), or relative (`$ref: ./internal/config.type`)
+- **Reusable definitions**: Define common schemas in `$defs` and reference them with `$ref`
+- **Schema composition**: Use `allOf` for complex configurations
+
+#### Supported types
+
+##### Primitive types
+
+Use Go type names directly in the `type` field:
+
+| Type | Go type | JSON Schema type |
+|------|---------|-----------------|
+| `string` | `string` | `string` |
+| `bool` | `bool` | `boolean` |
+| `int` | `int` | `integer` |
+| `int8` | `int8` | `integer` |
+| `int16` | `int16` | `integer` |
+| `int32` | `int32` | `integer` |
+| `int64` | `int64` | `integer` |
+| `uint` | `uint` | `integer` |
+| `uint8` | `uint8` | `integer` |
+| `uint16` | `uint16` | `integer` |
+| `uint32` | `uint32` | `integer` |
+| `uint64` | `uint64` | `integer` |
+| `byte` | `byte` | `integer` |
+| `rune` | `rune` | `integer` |
+| `float32` | `float32` | `number` |
+| `float64` | `float64` | `number` |
+| `any` | `any` | *(no type constraint)* |
+
+##### Container types
+
+| Type | Go type | JSON Schema type | Notes |
+|------|---------|-----------------|-------|
+| `object` | struct | `object` | Requires `properties:` |
+| `slice` | `[]T` | `array` | Requires `values:` for the element type |
+| `map` | `map[string]T` | `object` | Requires `values:` for the value type |
+
+Example using container types:
+
+```yaml
+config:
+  type: object
+  properties:
+    endpoints:
+      type: slice
+      values:
+        type: string
+      description: List of endpoints to connect to.
+    headers:
+      type: map
+      values:
+        type: string
+      description: Extra HTTP headers to attach to each request.
+    tls:
+      $ref: go.opentelemetry.io/collector/config/configtls.server_config
+```
+
+##### Alias types
+
+Shorthand types that expand to a primitive or container type with additional annotations:
+
+| Alias | Go type | JSON Schema representation | Notes |
+|-------|---------|---------------------------|-------|
+| `float` | `float32` | `number` | Shorthand for `float32` |
+| `double` | `float64` | `number` | Shorthand for `float64` |
+| `duration` | `time.Duration` | `string` with Go duration pattern | e.g. `"30s"`, `"1h30m"` |
+| `time` | `time.Time` | `string` with `format: date-time` | RFC 3339 format |
+| `opaque_string` | `configopaque.String` | `string` | Masked in logs |
+| `component_id` | `component.ID` | `string` | Collector component ID |
+| `opaque_map` | `configopaque.MapList` | `object` of name/value pairs | Values masked in logs |
+
+Example using alias types:
+
+```yaml
+config:
+  type: object
+  properties:
+    max_results:
+      type: int64
+      default: 100
+    timeout:
+      type: duration
+      default: 30s
+    api_token:
+      type: opaque_string
+```
+
+#### Additional resources
+
+To learn more about using config generator please refer to [GUIDE.md](./docs/GUIDE.md) docs.
+
+### Metrics Builder Configuration
+
+For receivers, scrapers, and other components that emit metrics, `mdatagen` can generate metrics builder
+configuration from `metadata.yaml`.
+
+```yaml
+type: myreceiver
+status:
+  class: receiver
+  stability:
+    beta: [metrics]
+
+resource_attributes:
+  transport:
+    description: Transport used by the request.
+    type: string
+    enabled: true
+
+attributes:
+  status_code:
+    description: Response status code.
+    type: int
+    requirement_level: opt_in
+
+metrics:
+  http.server.request.count:
+    enabled: true
+    description: Number of received requests.
+    unit: "{request}"
+    sum:
+      values: int
+      monotonic: true
+      aggregation_temporality: cumulative
+    attributes: [status_code]
+```
+
+This lets users:
+
+- enable or disable individual metrics
+- enable or disable resource attributes
+- use `metrics_include` and `metrics_exclude` on resource attributes to only emit metrics with matching resource attribute values
+
+### Metric Reaggregation Configuration
+
+`mdatagen` lets users reduce metric cardinality by dropping selected metric attributes
+and aggregating the resulting datapoints.
+
+```yaml
+attributes:
+  transport:
+    description: Transport used by the request.
+    type: string
+    requirement_level: recommended
+  status_code:
+    description: Response status code.
+    type: int
+    requirement_level: opt_in
+```
+
+This adds two per-metric settings for metrics that declare attributes:
+
+- `attributes`: the subset of metric attributes to keep in the emitted metric stream
+- `aggregation_strategy`: how collapsed datapoints are merged, using `sum`, `avg`, `min`, or `max`
+
+Defaults:
+
+- sum metrics use `sum`; gauge metrics use `avg`
+- `required` attributes are always kept
+- `recommended` and `conditionally_required` attributes are kept by default, but users can remove them
+- `opt_in` attributes are omitted by default, so that dimension is aggregated unless the user adds it
+
+Example user configuration:
+
+```yaml
+receivers:
+  myreceiver:
+    metrics:
+      http.server.request.count:
+        enabled: true
+        aggregation_strategy: sum
+        attributes: [transport]
+```
+
+In this example, datapoints that only differ by `status_code` are aggregated together, while
+`transport` remains part of the output identity.
+
 ### Feature Gates Documentation
 
 The metadata generator supports automatic documentation generation for feature gates used by components. Feature gates are documented by adding a `feature_gates` section to your `metadata.yaml`:
@@ -70,13 +390,13 @@ status:
     beta: [metrics, traces]
 
 feature_gates:
-  - id: mycomponent.newFeature
+  - id: receiver.mycomponent.newFeature
     description: 'Enables new feature functionality that improves performance'
     stage: alpha
     from_version: 'v0.100.0'
     reference_url: 'https://github.com/open-telemetry/opentelemetry-collector/issues/12345'
 
-  - id: mycomponent.stableFeature
+  - id: receiver.mycomponent.stableFeature
     description: 'A feature that has reached stability'
     stage: stable
     from_version: 'v0.90.0'
@@ -94,6 +414,13 @@ This will generate a "Feature Gates" section in the component's `documentation.m
 - **Reference**: Link to additional contextual information
 
 The feature gate definitions should correspond to actual gates registered in your component code using the [Feature Gates API](../../featuregate/README.md).
+
+By default, mdatagen applies strict validation to feature gate entries:
+
+- Every gate `id` must be prefixed with `<status.class>.<type>.` (e.g. `receiver.mycomponent.newFeature`), so gates are namespaced to the component that owns them.
+- Every `reference_url` must be a GitHub issue URL of the form `https://github.com/<owner>/<repo>/issues/<number>`. Pull requests, blog posts, and other URLs are rejected.
+
+Individual gates that predate these rules can be grandfathered in by setting `skip_strict_validation: true` on the gate entry itself. New gates should not set this flag.
 
 ### Generate multiple metadata packages
 

@@ -48,11 +48,21 @@ func newFakeQueue[T request.Request](offerErr error, size, capacity int64) Queue
 	return &fakeQueue[T]{offerErr: offerErr, size: size, capacity: capacity}
 }
 
+func newTestObsQueue[T request.Request](t *testing.T, set Settings[T], delegate Queue[T]) (Queue[T], error) {
+	t.Helper()
+	obsMetrics, err := NewExporterObsMetrics(set.Telemetry, set.ID, set.Signal, nil)
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(obsMetrics.Shutdown)
+	return newObsQueue(set, obsMetrics, delegate)
+}
+
 func TestObsQueueLogsSizeCapacity(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    pipeline.SignalLogs,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
@@ -64,7 +74,8 @@ func TestObsQueueLogsSizeCapacity(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(exporterKey, exporterID.String()),
-					attribute.String(dataTypeKey, pipeline.SignalLogs.String())),
+					attribute.String(dataTypeKey, pipeline.SignalLogs.String()),
+				),
 				Value: int64(7),
 			},
 		}, metricdatatest.IgnoreTimestamp())
@@ -73,7 +84,8 @@ func TestObsQueueLogsSizeCapacity(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(exporterKey, exporterID.String()),
-					attribute.String(dataTypeKey, pipeline.SignalLogs.String())),
+					attribute.String(dataTypeKey, pipeline.SignalLogs.String()),
+				),
 				Value: int64(9),
 			},
 		}, metricdatatest.IgnoreTimestamp())
@@ -83,7 +95,7 @@ func TestObsQueueLogsFailure(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    pipeline.SignalLogs,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
@@ -94,7 +106,8 @@ func TestObsQueueLogsFailure(t *testing.T) {
 		[]metricdata.DataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String(exporterKey, exporterID.String())),
+					attribute.String(exporterKey, exporterID.String()),
+				),
 				Value: int64(2),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -104,7 +117,7 @@ func TestObsQueueTracesSizeCapacity(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    pipeline.SignalTraces,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
@@ -116,7 +129,8 @@ func TestObsQueueTracesSizeCapacity(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(exporterKey, exporterID.String()),
-					attribute.String(dataTypeKey, pipeline.SignalTraces.String())),
+					attribute.String(dataTypeKey, pipeline.SignalTraces.String()),
+				),
 				Value: int64(17),
 			},
 		}, metricdatatest.IgnoreTimestamp())
@@ -125,7 +139,8 @@ func TestObsQueueTracesSizeCapacity(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(exporterKey, exporterID.String()),
-					attribute.String(dataTypeKey, pipeline.SignalTraces.String())),
+					attribute.String(dataTypeKey, pipeline.SignalTraces.String()),
+				),
 				Value: int64(19),
 			},
 		}, metricdatatest.IgnoreTimestamp())
@@ -135,7 +150,7 @@ func TestObsQueueTracesFailure(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    pipeline.SignalTraces,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
@@ -146,7 +161,8 @@ func TestObsQueueTracesFailure(t *testing.T) {
 		[]metricdata.DataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String(exporterKey, exporterID.String())),
+					attribute.String(exporterKey, exporterID.String()),
+				),
 				Value: int64(12),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -156,7 +172,7 @@ func TestObsQueueMetrics(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    pipeline.SignalMetrics,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
@@ -168,7 +184,8 @@ func TestObsQueueMetrics(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(exporterKey, exporterID.String()),
-					attribute.String(dataTypeKey, pipeline.SignalMetrics.String())),
+					attribute.String(dataTypeKey, pipeline.SignalMetrics.String()),
+				),
 				Value: int64(27),
 			},
 		}, metricdatatest.IgnoreTimestamp())
@@ -177,7 +194,8 @@ func TestObsQueueMetrics(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(exporterKey, exporterID.String()),
-					attribute.String(dataTypeKey, pipeline.SignalMetrics.String())),
+					attribute.String(dataTypeKey, pipeline.SignalMetrics.String()),
+				),
 				Value: int64(29),
 			},
 		}, metricdatatest.IgnoreTimestamp())
@@ -187,7 +205,7 @@ func TestObsQueueMetricsFailure(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    pipeline.SignalMetrics,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
@@ -198,7 +216,8 @@ func TestObsQueueMetricsFailure(t *testing.T) {
 		[]metricdata.DataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String(exporterKey, exporterID.String())),
+					attribute.String(exporterKey, exporterID.String()),
+				),
 				Value: int64(22),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -208,7 +227,7 @@ func TestObsQueueProfiles(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    xpipeline.SignalProfiles,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
@@ -220,7 +239,8 @@ func TestObsQueueProfiles(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(exporterKey, exporterID.String()),
-					attribute.String(dataTypeKey, xpipeline.SignalProfiles.String())),
+					attribute.String(dataTypeKey, xpipeline.SignalProfiles.String()),
+				),
 				Value: int64(27),
 			},
 		}, metricdatatest.IgnoreTimestamp())
@@ -229,7 +249,8 @@ func TestObsQueueProfiles(t *testing.T) {
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(exporterKey, exporterID.String()),
-					attribute.String(dataTypeKey, xpipeline.SignalProfiles.String())),
+					attribute.String(dataTypeKey, xpipeline.SignalProfiles.String()),
+				),
 				Value: int64(29),
 			},
 		}, metricdatatest.IgnoreTimestamp())
@@ -239,7 +260,7 @@ func TestObsQueueProfilesFailure(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    xpipeline.SignalProfiles,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
@@ -250,7 +271,8 @@ func TestObsQueueProfilesFailure(t *testing.T) {
 		[]metricdata.DataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String(exporterKey, exporterID.String())),
+					attribute.String(exporterKey, exporterID.String()),
+				),
 				Value: int64(22),
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -260,18 +282,19 @@ func TestObsQueueLogsBatchSize(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    pipeline.SignalLogs,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
 	}, newFakeQueue[request.Request](nil, 7, 9))
 	require.NoError(t, err)
 	require.NoError(t, te.Offer(context.Background(), &requesttest.FakeRequest{Items: 2, Bytes: 100}))
-	metadatatest.AssertEqualExporterQueueBatchSendSize(t, tt,
+	metadatatest.AssertEqualExporterEnqueueSize(t, tt,
 		[]metricdata.HistogramDataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String(exporterKey, exporterID.String())),
+					attribute.String(exporterKey, exporterID.String()),
+				),
 				Count:        1,
 				Bounds:       []float64{10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000, 100000},
 				BucketCounts: []uint64{1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -286,18 +309,19 @@ func TestObsQueueTracesBatchSize(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    pipeline.SignalTraces,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
 	}, newFakeQueue[request.Request](nil, 17, 19))
 	require.NoError(t, err)
 	require.NoError(t, te.Offer(context.Background(), &requesttest.FakeRequest{Items: 12, Bytes: 200}))
-	metadatatest.AssertEqualExporterQueueBatchSendSize(t, tt,
+	metadatatest.AssertEqualExporterEnqueueSize(t, tt,
 		[]metricdata.HistogramDataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String(exporterKey, exporterID.String())),
+					attribute.String(exporterKey, exporterID.String()),
+				),
 				Count:        1,
 				Bounds:       []float64{10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000, 100000},
 				BucketCounts: []uint64{0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -312,18 +336,19 @@ func TestObsQueueMetricsBatchSize(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    pipeline.SignalMetrics,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
 	}, newFakeQueue[request.Request](nil, 27, 29))
 	require.NoError(t, err)
 	require.NoError(t, te.Offer(context.Background(), &requesttest.FakeRequest{Items: 22, Bytes: 300}))
-	metadatatest.AssertEqualExporterQueueBatchSendSize(t, tt,
+	metadatatest.AssertEqualExporterEnqueueSize(t, tt,
 		[]metricdata.HistogramDataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String(exporterKey, exporterID.String())),
+					attribute.String(exporterKey, exporterID.String()),
+				),
 				Count:        1,
 				Bounds:       []float64{10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000, 100000},
 				BucketCounts: []uint64{0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -338,18 +363,19 @@ func TestObsQueueProfilesBatchSize(t *testing.T) {
 	tt := componenttest.NewTelemetry()
 	t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
 
-	te, err := newObsQueue[request.Request](Settings[request.Request]{
+	te, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
 		Signal:    xpipeline.SignalProfiles,
 		ID:        exporterID,
 		Telemetry: tt.NewTelemetrySettings(),
 	}, newFakeQueue[request.Request](nil, 27, 29))
 	require.NoError(t, err)
 	require.NoError(t, te.Offer(context.Background(), &requesttest.FakeRequest{Items: 22, Bytes: 300}))
-	metadatatest.AssertEqualExporterQueueBatchSendSize(t, tt,
+	metadatatest.AssertEqualExporterEnqueueSize(t, tt,
 		[]metricdata.HistogramDataPoint[int64]{
 			{
 				Attributes: attribute.NewSet(
-					attribute.String(exporterKey, exporterID.String())),
+					attribute.String(exporterKey, exporterID.String()),
+				),
 				Count:        1,
 				Bounds:       []float64{10, 25, 50, 75, 100, 250, 500, 750, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 20000, 30000, 50000, 100000},
 				BucketCounts: []uint64{0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -358,4 +384,37 @@ func TestObsQueueProfilesBatchSize(t *testing.T) {
 				Sum:          22,
 			},
 		}, metricdatatest.IgnoreTimestamp())
+}
+
+func TestObsQueueEnqueueSpanAttributes(t *testing.T) {
+	t.Parallel()
+	for _, signal := range []pipeline.Signal{pipeline.SignalTraces, pipeline.SignalMetrics, pipeline.SignalLogs, xpipeline.SignalProfiles} {
+		t.Run(signal.String(), func(t *testing.T) {
+			for _, offerErr := range []error{nil, errors.New("queue full")} {
+				name := "success"
+				if offerErr != nil {
+					name = "failure"
+				}
+				t.Run(name, func(t *testing.T) {
+					tt := componenttest.NewTelemetry()
+					t.Cleanup(func() { require.NoError(t, tt.Shutdown(context.Background())) })
+					id := component.NewIDWithName(exportertest.NopType, "named")
+					q, err := newTestObsQueue[request.Request](t, Settings[request.Request]{
+						Signal:    signal,
+						ID:        id,
+						Telemetry: tt.NewTelemetrySettings(),
+					}, newFakeQueue[request.Request](offerErr, 0, 10))
+					require.NoError(t, err)
+					require.ErrorIs(t, q.Offer(context.Background(), &requesttest.FakeRequest{Items: 1}), offerErr)
+					spans := tt.SpanRecorder.Ended()
+					require.Len(t, spans, 1)
+					require.Equal(t, "exporter/enqueue", spans[0].Name())
+					require.ElementsMatch(t, []attribute.KeyValue{
+						attribute.String("exporter", "nop/named"),
+						attribute.String("data_type", signal.String()),
+					}, spans[0].Attributes())
+				})
+			}
+		})
+	}
 }

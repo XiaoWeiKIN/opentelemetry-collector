@@ -22,98 +22,98 @@ func NewSettings(tt *componenttest.Telemetry) processor.Settings {
 	return set
 }
 
-func AssertEqualProcessorAcceptedLogRecords(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+func AssertEqualProcessorMemoryLimiterAcceptedLogRecords(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
-		Name:        "otelcol_processor_accepted_log_records",
-		Description: "Number of log records successfully pushed into the next component in the pipeline. [Deprecated]",
-		Unit:        "{records}",
+		Name:        "otelcol_processor_memory_limiter_accepted_log_records",
+		Description: "Number of log records successfully pushed into the next component in the pipeline. [Alpha]",
+		Unit:        "{record}",
 		Data: metricdata.Sum[int64]{
 			Temporality: metricdata.CumulativeTemporality,
 			IsMonotonic: true,
 			DataPoints:  dps,
 		},
 	}
-	got, err := tt.GetMetric("otelcol_processor_accepted_log_records")
+	got, err := tt.GetMetric("otelcol_processor_memory_limiter_accepted_log_records")
 	require.NoError(t, err)
 	metricdatatest.AssertEqual(t, want, got, opts...)
 }
 
-func AssertEqualProcessorAcceptedMetricPoints(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+func AssertEqualProcessorMemoryLimiterAcceptedMetricPoints(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
-		Name:        "otelcol_processor_accepted_metric_points",
-		Description: "Number of metric points successfully pushed into the next component in the pipeline. [Deprecated]",
-		Unit:        "{datapoints}",
+		Name:        "otelcol_processor_memory_limiter_accepted_metric_points",
+		Description: "Number of metric points successfully pushed into the next component in the pipeline. [Alpha]",
+		Unit:        "{datapoint}",
 		Data: metricdata.Sum[int64]{
 			Temporality: metricdata.CumulativeTemporality,
 			IsMonotonic: true,
 			DataPoints:  dps,
 		},
 	}
-	got, err := tt.GetMetric("otelcol_processor_accepted_metric_points")
+	got, err := tt.GetMetric("otelcol_processor_memory_limiter_accepted_metric_points")
 	require.NoError(t, err)
 	metricdatatest.AssertEqual(t, want, got, opts...)
 }
 
-func AssertEqualProcessorAcceptedSpans(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+func AssertEqualProcessorMemoryLimiterAcceptedSpans(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
-		Name:        "otelcol_processor_accepted_spans",
-		Description: "Number of spans successfully pushed into the next component in the pipeline. [Deprecated]",
-		Unit:        "{spans}",
+		Name:        "otelcol_processor_memory_limiter_accepted_spans",
+		Description: "Number of spans successfully pushed into the next component in the pipeline. [Alpha]",
+		Unit:        "{span}",
 		Data: metricdata.Sum[int64]{
 			Temporality: metricdata.CumulativeTemporality,
 			IsMonotonic: true,
 			DataPoints:  dps,
 		},
 	}
-	got, err := tt.GetMetric("otelcol_processor_accepted_spans")
+	got, err := tt.GetMetric("otelcol_processor_memory_limiter_accepted_spans")
 	require.NoError(t, err)
 	metricdatatest.AssertEqual(t, want, got, opts...)
 }
 
-func AssertEqualProcessorRefusedLogRecords(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+func AssertEqualProcessorMemoryLimiterRefusedLogRecords(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
-		Name:        "otelcol_processor_refused_log_records",
-		Description: "Number of log records that were rejected by the next component in the pipeline. [Deprecated]",
-		Unit:        "{records}",
+		Name:        "otelcol_processor_memory_limiter_refused_log_records",
+		Description: "Number of log records that were rejected by the next component in the pipeline. [Alpha]",
+		Unit:        "{record}",
 		Data: metricdata.Sum[int64]{
 			Temporality: metricdata.CumulativeTemporality,
 			IsMonotonic: true,
 			DataPoints:  dps,
 		},
 	}
-	got, err := tt.GetMetric("otelcol_processor_refused_log_records")
+	got, err := tt.GetMetric("otelcol_processor_memory_limiter_refused_log_records")
 	require.NoError(t, err)
 	metricdatatest.AssertEqual(t, want, got, opts...)
 }
 
-func AssertEqualProcessorRefusedMetricPoints(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+func AssertEqualProcessorMemoryLimiterRefusedMetricPoints(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
-		Name:        "otelcol_processor_refused_metric_points",
-		Description: "Number of metric points that were rejected by the next component in the pipeline. [Deprecated]",
-		Unit:        "{datapoints}",
+		Name:        "otelcol_processor_memory_limiter_refused_metric_points",
+		Description: "Number of metric points that were rejected by the next component in the pipeline. [Alpha]",
+		Unit:        "{datapoint}",
 		Data: metricdata.Sum[int64]{
 			Temporality: metricdata.CumulativeTemporality,
 			IsMonotonic: true,
 			DataPoints:  dps,
 		},
 	}
-	got, err := tt.GetMetric("otelcol_processor_refused_metric_points")
+	got, err := tt.GetMetric("otelcol_processor_memory_limiter_refused_metric_points")
 	require.NoError(t, err)
 	metricdatatest.AssertEqual(t, want, got, opts...)
 }
 
-func AssertEqualProcessorRefusedSpans(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
+func AssertEqualProcessorMemoryLimiterRefusedSpans(t *testing.T, tt *componenttest.Telemetry, dps []metricdata.DataPoint[int64], opts ...metricdatatest.Option) {
 	want := metricdata.Metrics{
-		Name:        "otelcol_processor_refused_spans",
-		Description: "Number of spans that were rejected by the next component in the pipeline. [Deprecated]",
-		Unit:        "{spans}",
+		Name:        "otelcol_processor_memory_limiter_refused_spans",
+		Description: "Number of spans that were rejected by the next component in the pipeline. [Alpha]",
+		Unit:        "{span}",
 		Data: metricdata.Sum[int64]{
 			Temporality: metricdata.CumulativeTemporality,
 			IsMonotonic: true,
 			DataPoints:  dps,
 		},
 	}
-	got, err := tt.GetMetric("otelcol_processor_refused_spans")
+	got, err := tt.GetMetric("otelcol_processor_memory_limiter_refused_spans")
 	require.NoError(t, err)
 	metricdatatest.AssertEqual(t, want, got, opts...)
 }

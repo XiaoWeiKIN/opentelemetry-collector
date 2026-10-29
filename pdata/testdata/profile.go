@@ -15,19 +15,33 @@ var profileStartTimestamp = pcommon.NewTimestampFromTime(time.Date(2020, 2, 11, 
 // GenerateProfiles generates dummy profiling data for tests
 func GenerateProfiles(profilesCount int) pprofile.Profiles {
 	td := pprofile.NewProfiles()
-	initResource(td.ResourceProfiles().AppendEmpty().Resource())
-	ss := td.ResourceProfiles().At(0).ScopeProfiles().AppendEmpty().Profiles()
 
 	dic := td.Dictionary()
+	// By convention, the first element is empty in all dictionary tables
+	dic.MappingTable().AppendEmpty()
+	dic.LocationTable().AppendEmpty()
+	dic.FunctionTable().AppendEmpty()
+	dic.LinkTable().AppendEmpty()
 	dic.StringTable().Append("")
-	dic.StringTable().Append("key")
+	dic.AttributeTable().AppendEmpty()
+	dic.StackTable().AppendEmpty()
 
-	attr := dic.AttributeTable().AppendEmpty()
-	attr.SetKeyStrindex(1)
-	attr.Value().SetStr("value")
-	attr2 := dic.AttributeTable().AppendEmpty()
-	attr.SetKeyStrindex(1)
-	attr2.Value().SetStr("value")
+	if profilesCount != 0 {
+		// At least a single Profiles was requested.
+		dic.StringTable().Append("key")
+		attr1 := dic.AttributeTable().AppendEmpty()
+		attr1.SetKeyStrindex(1)
+		attr1.Value().SetStr("value-1")
+		if profilesCount > 1 {
+			// More than two Profiles were requested.
+			attr2 := dic.AttributeTable().AppendEmpty()
+			attr2.SetKeyStrindex(1)
+			attr2.Value().SetStr("value-2")
+		}
+	}
+
+	initResource(td.ResourceProfiles().AppendEmpty().Resource())
+	ss := td.ResourceProfiles().At(0).ScopeProfiles().AppendEmpty().Profiles()
 
 	ss.EnsureCapacity(profilesCount)
 	for i := range profilesCount {
@@ -58,7 +72,7 @@ func fillProfileOne(dic pprofile.ProfilesDictionary, profile pprofile.Profile) {
 	sample := profile.Samples().AppendEmpty()
 	sample.SetStackIndex(stackID)
 	sample.Values().Append(4)
-	sample.AttributeIndices().Append(0)
+	sample.AttributeIndices().Append(1) // reference to attr1
 }
 
 func fillProfileTwo(dic pprofile.ProfilesDictionary, profile pprofile.Profile) {
@@ -76,5 +90,5 @@ func fillProfileTwo(dic pprofile.ProfilesDictionary, profile pprofile.Profile) {
 	sample := profile.Samples().AppendEmpty()
 	sample.SetStackIndex(stackID)
 	sample.Values().Append(9)
-	sample.AttributeIndices().Append(0)
+	sample.AttributeIndices().Append(2) // reference to attr2
 }

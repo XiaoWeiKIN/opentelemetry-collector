@@ -12,7 +12,7 @@ Number of log records failed to be added to the sending queue.
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {records} | Sum | Int | true | Alpha |
+| {record} | Sum | Int | true | Alpha |
 
 ### otelcol_exporter_enqueue_failed_metric_points
 
@@ -20,7 +20,7 @@ Number of metric points failed to be added to the sending queue.
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {datapoints} | Sum | Int | true | Alpha |
+| {datapoint} | Sum | Int | true | Alpha |
 
 ### otelcol_exporter_enqueue_failed_profile_samples
 
@@ -28,7 +28,7 @@ Number of profile samples failed to be added to the sending queue.
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {samples} | Sum | Int | true | Development |
+| {sample} | Sum | Int | true | Development |
 
 ### otelcol_exporter_enqueue_failed_spans
 
@@ -36,19 +36,59 @@ Number of spans failed to be added to the sending queue.
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {spans} | Sum | Int | true | Alpha |
+| {span} | Sum | Int | true | Alpha |
 
-### otelcol_exporter_queue_batch_send_size
+### otelcol_exporter_enqueue_size
 
-Number of units in the batch
+Number of units in the request added to the sending queue. Only available on detailed level.
 
 | Unit | Metric Type | Value Type | Stability |
 | ---- | ----------- | ---------- | --------- |
-| {units} | Histogram | Int | Development |
+| {unit} | Histogram | Int | Development |
+
+### otelcol_exporter_enqueue_size_bytes
+
+Number of bytes in the request added to the sending queue. Only available on detailed level.
+
+| Unit | Metric Type | Value Type | Stability |
+| ---- | ----------- | ---------- | --------- |
+| By | Histogram | Int | Development |
+
+### otelcol_exporter_in_flight_requests
+
+Number of export requests currently in-flight (including retry backoff).
+
+| Unit | Metric Type | Value Type | Monotonic | Stability |
+| ---- | ----------- | ---------- | --------- | --------- |
+| {request} | Sum | Int | false | Development |
+
+### otelcol_exporter_queue_batch_partition_cache_capacity
+
+Maximum number of active partition batchers in the LRU cache. Only recorded when batch partitioning is enabled.
+
+| Unit | Metric Type | Value Type | Stability |
+| ---- | ----------- | ---------- | --------- |
+| {partition} | Gauge | Int | Development |
+
+### otelcol_exporter_queue_batch_partition_cache_size
+
+Current number of active partition batchers in the LRU cache. Only recorded when batch partitioning is enabled.
+
+| Unit | Metric Type | Value Type | Stability |
+| ---- | ----------- | ---------- | --------- |
+| {partition} | Gauge | Int | Development |
+
+### otelcol_exporter_queue_batch_send_size
+
+Number of units in the batch. Only recorded when batching is enabled. Only available on detailed level.
+
+| Unit | Metric Type | Value Type | Stability |
+| ---- | ----------- | ---------- | --------- |
+| {unit} | Histogram | Int | Development |
 
 ### otelcol_exporter_queue_batch_send_size_bytes
 
-Number of bytes in batch that was sent. Only available on detailed level.
+Number of bytes in batch that was sent. Only recorded when batching is enabled. Only available on detailed level.
 
 | Unit | Metric Type | Value Type | Stability |
 | ---- | ----------- | ---------- | --------- |
@@ -60,7 +100,7 @@ Fixed capacity of the retry queue (in batches).
 
 | Unit | Metric Type | Value Type | Stability |
 | ---- | ----------- | ---------- | --------- |
-| {batches} | Gauge | Int | Alpha |
+| {batch} | Gauge | Int | Alpha |
 
 ### otelcol_exporter_queue_size
 
@@ -68,7 +108,7 @@ Current size of the retry queue (in batches).
 
 | Unit | Metric Type | Value Type | Stability |
 | ---- | ----------- | ---------- | --------- |
-| {batches} | Gauge | Int | Alpha |
+| {batch} | Gauge | Int | Alpha |
 
 ### otelcol_exporter_send_failed_log_records
 
@@ -76,7 +116,7 @@ Number of log records in failed attempts to send to destination. At detailed tel
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {records} | Sum | Int | true | Alpha |
+| {record} | Sum | Int | true | Alpha |
 
 ### otelcol_exporter_send_failed_metric_points
 
@@ -84,7 +124,7 @@ Number of metric points in failed attempts to send to destination. At detailed t
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {datapoints} | Sum | Int | true | Alpha |
+| {datapoint} | Sum | Int | true | Alpha |
 
 ### otelcol_exporter_send_failed_profile_samples
 
@@ -92,7 +132,7 @@ Number of profile samples in failed attempts to send to destination. At detailed
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {samples} | Sum | Int | true | Development |
+| {sample} | Sum | Int | true | Development |
 
 ### otelcol_exporter_send_failed_spans
 
@@ -100,7 +140,7 @@ Number of spans in failed attempts to send to destination. At detailed telemetry
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {spans} | Sum | Int | true | Alpha |
+| {span} | Sum | Int | true | Alpha |
 
 ### otelcol_exporter_sent_log_records
 
@@ -108,7 +148,7 @@ Number of log record successfully sent to destination.
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {records} | Sum | Int | true | Alpha |
+| {record} | Sum | Int | true | Alpha |
 
 ### otelcol_exporter_sent_metric_points
 
@@ -116,7 +156,7 @@ Number of metric points successfully sent to destination.
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {datapoints} | Sum | Int | true | Alpha |
+| {datapoint} | Sum | Int | true | Alpha |
 
 ### otelcol_exporter_sent_profile_samples
 
@@ -124,7 +164,7 @@ Number of profile samples successfully sent to destination.
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {samples} | Sum | Int | true | Development |
+| {sample} | Sum | Int | true | Development |
 
 ### otelcol_exporter_sent_spans
 
@@ -132,4 +172,14 @@ Number of spans successfully sent to destination.
 
 | Unit | Metric Type | Value Type | Monotonic | Stability |
 | ---- | ----------- | ---------- | --------- | --------- |
-| {spans} | Sum | Int | true | Alpha |
+| {span} | Sum | Int | true | Alpha |
+
+## Feature Gates
+
+This component has the following feature gates:
+
+| Feature Gate | Stage | Description | From Version | To Version | Reference |
+| ------------ | ----- | ----------- | ------------ | ---------- | --------- |
+| `pkg.exporterhelper.queueBatchEnabled` | alpha | Enables exporterhelper batching by default in NewDefaultQueueConfig, as described in the batching migration RFC. | v0.158.0 | N/A | [Link](https://github.com/open-telemetry/opentelemetry-collector/issues/15047) |
+
+For more information about feature gates, see the [Feature Gates](https://github.com/open-telemetry/opentelemetry-collector/blob/main/featuregate/README.md) documentation.

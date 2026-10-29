@@ -1,33 +1,33 @@
 module go.opentelemetry.io/collector/pdata/pprofile
 
-go 1.25.0
+go 1.26.0
 
 require (
-	github.com/stretchr/testify v1.11.1
-	go.opentelemetry.io/collector/internal/testutil v0.146.1
-	go.opentelemetry.io/collector/pdata v1.52.0
-	go.opentelemetry.io/proto/slim/otlp/collector/profiles/v1development v0.2.0
-	go.opentelemetry.io/proto/slim/otlp/profiles/v1development v0.2.0
+	github.com/stretchr/testify v1.12.1
+	go.opentelemetry.io/collector/featuregate v1.70.0
+	go.opentelemetry.io/collector/internal/testutil v0.164.0
+	go.opentelemetry.io/collector/pdata v1.70.0
+	go.opentelemetry.io/otel v1.47.0
+	go.opentelemetry.io/proto/slim/otlp/collector/profiles/v1development v0.4.1
+	go.opentelemetry.io/proto/slim/otlp/profiles/v1development v0.4.1
 	go.uber.org/goleak v1.3.0
-	google.golang.org/grpc v1.79.1
-	google.golang.org/protobuf v1.36.11
+	google.golang.org/grpc v1.85.0
+	google.golang.org/protobuf v1.36.12
 )
 
 require (
-	github.com/davecgh/go-spew v1.1.1 // indirect
-	github.com/hashicorp/go-version v1.8.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
-	go.opentelemetry.io/collector/featuregate v1.52.0 // indirect
-	go.opentelemetry.io/proto/slim/otlp v1.9.0 // indirect
+	go.opentelemetry.io/proto/slim/otlp v1.11.1 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	golang.org/x/net v0.48.0 // indirect
-	golang.org/x/sys v0.39.0 // indirect
-	golang.org/x/text v0.32.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20251222181119-0a764e51fe1b // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
+	golang.org/x/net v0.60.0 // indirect
+	golang.org/x/sys v0.48.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260817212433-ac3dfec99bb1 // indirect
 )
 
 replace go.opentelemetry.io/collector/pdata => ../

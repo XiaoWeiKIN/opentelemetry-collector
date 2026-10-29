@@ -4,14 +4,17 @@
 package queuebatch // import "go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch"
 import (
 	"context"
+	"errors"
 	"sync"
 
+	lru "github.com/hashicorp/golang-lru/v2/simplelru"
 	"go.uber.org/zap"
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/request"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/sender"
+	queuebatchtelemetry "go.opentelemetry.io/collector/internal/telemetry/queuebatch"
 )
 
 type multiBatcher struct {
@@ -21,46 +24,70 @@ type multiBatcher struct {
 	partitioner Partitioner[request.Request]
 	mergeCtx    func(context.Context, context.Context) context.Context
 	consumeFunc sender.SendFunc[request.Request]
-	shards      sync.Map
+	partitions  *lru.LRU[string, *partitionBatcher]
 	logger      *zap.Logger
+	lock        sync.Mutex
 }
 
 func newMultiBatcher(
 	bCfg BatchConfig,
 	sizer request.Sizer,
 	wp *workerPool,
-	partitioner Partitioner[request.Request],
-	mergeCtx func(context.Context, context.Context) context.Context,
-	next sender.SendFunc[request.Request],
-	logger *zap.Logger,
-) *multiBatcher {
-	return &multiBatcher{
+	set batcherSettings[request.Request],
+) (*multiBatcher, error) {
+	mb := &multiBatcher{
 		cfg:         bCfg,
 		wp:          wp,
 		sizer:       sizer,
-		partitioner: partitioner,
-		mergeCtx:    mergeCtx,
-		consumeFunc: next,
-		logger:      logger,
+		partitioner: set.partitioner,
+		mergeCtx:    set.mergeCtx,
+		consumeFunc: set.next,
+		logger:      set.logger,
 	}
+
+	cacheSize := bCfg.Partition.CacheSize
+
+	// Create LRU cache with eviction callback
+	cache, err := lru.NewLRU[string, *partitionBatcher](cacheSize, func(_ string, pb *partitionBatcher) {
+		// Flush the partition when evicted
+		mb.wp.execute(pb.shutdownInternal)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	mb.partitions = cache
+
+	if err := errors.Join(
+		set.obsMetrics.RegisterInt(queuebatchtelemetry.MetricPartitionCacheSize, mb.getActivePartitionsCount),
+		set.obsMetrics.RegisterInt(queuebatchtelemetry.MetricPartitionCacheCapacity, func() int64 { return int64(cacheSize) }),
+	); err != nil {
+		return nil, err
+	}
+
+	return mb, nil
 }
 
 func (mb *multiBatcher) getPartition(ctx context.Context, req request.Request) *partitionBatcher {
 	key := mb.partitioner.GetKey(ctx, req)
-	s, found := mb.shards.Load(key)
-	// Fast path, shard already created.
-	if found {
-		return s.(*partitionBatcher)
+
+	mb.lock.Lock()
+	defer mb.lock.Unlock()
+
+	// Fast path: partition already exists
+	if pb, ok := mb.partitions.Get(key); ok {
+		return pb
 	}
 
-	newS := newPartitionBatcher(mb.cfg, mb.sizer, mb.mergeCtx, mb.wp, mb.consumeFunc, mb.logger)
-	_ = newS.Start(ctx, nil)
-	s, loaded := mb.shards.LoadOrStore(key, newS)
-	// If not loaded, there was a race condition in adding the new shard. Shutdown the newly created shard.
-	if loaded {
-		_ = newS.Shutdown(ctx)
-	}
-	return s.(*partitionBatcher)
+	// Create new partition with onEmpty callback to remove from LRU after idle timeout
+	newPB := newPartitionBatcher(mb.cfg, mb.sizer, mb.mergeCtx, mb.wp, mb.consumeFunc, mb.logger, func() {
+		mb.lock.Lock()
+		defer mb.lock.Unlock()
+		mb.partitions.Remove(key)
+	})
+	_ = mb.partitions.Add(key, newPB)
+	_ = newPB.Start(ctx, nil)
+	return newPB
 }
 
 func (mb *multiBatcher) Start(context.Context, component.Host) error {
@@ -72,14 +99,24 @@ func (mb *multiBatcher) Consume(ctx context.Context, req request.Request, done q
 	shard.Consume(ctx, req, done)
 }
 
+func (mb *multiBatcher) getActivePartitionsCount() int64 {
+	mb.lock.Lock()
+	defer mb.lock.Unlock()
+	return int64(mb.partitions.Len())
+}
+
 func (mb *multiBatcher) Shutdown(ctx context.Context) error {
 	var wg sync.WaitGroup
-	mb.shards.Range(func(_, shard any) bool {
-		wg.Go(func() {
-			_ = shard.(*partitionBatcher).Shutdown(ctx)
-		})
-		return true
-	})
+	mb.lock.Lock()
+	defer mb.lock.Unlock()
+	for _, key := range mb.partitions.Keys() {
+		if pb, ok := mb.partitions.Peek(key); ok {
+			wg.Go(func() {
+				_ = pb.Shutdown(ctx)
+			})
+		}
+	}
 	wg.Wait()
+	mb.partitions.Purge()
 	return nil
 }

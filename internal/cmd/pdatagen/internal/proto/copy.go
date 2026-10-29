@@ -10,13 +10,12 @@ import (
 const copyOther = `{{ if .repeated -}}
 	dest.{{ .fieldName }} = append(dest.{{ .fieldName }}[:0], src.{{ .fieldName }}...)
 {{ else if ne .oneOfGroup "" -}}
-	var ov *{{ .oneOfMessageName }}
-	if !UseProtoPooling.IsEnabled() {
-		ov = &{{ .oneOfMessageName }}{}
-	} else {
-		ov = ProtoPool{{ .oneOfMessageName }}.Get().(*{{ .oneOfMessageName }})
-	}
+	ov := New{{ .oneOfMessageName }}()
+	{{ if .isBytes -}}
+	ov.{{ .fieldName }} = append(ov.{{ .fieldName }}[:0], t.{{ .fieldName }}...)
+	{{ else -}}
 	ov.{{ .fieldName }} = t.{{ .fieldName }}
+	{{ end -}}
 	dest.{{ .oneOfGroup }} = ov
 {{ else if .nullable -}}
 	if src.Has{{ .fieldName }}() {
@@ -31,12 +30,7 @@ const copyOther = `{{ if .repeated -}}
 const copyMessage = `{{ if .repeated -}}
 	dest.{{ .fieldName }} = Copy{{ .messageName }}{{ if .nullable }}Ptr{{ end }}Slice(dest.{{ .fieldName }}, src.{{ .fieldName }})
 {{- else if ne .oneOfGroup "" -}}
-	var ov *{{ .oneOfMessageName }}
-	if !UseProtoPooling.IsEnabled() {
-		ov = &{{ .oneOfMessageName }}{}
-	} else {
-		ov = ProtoPool{{ .oneOfMessageName }}.Get().(*{{ .oneOfMessageName }})
-	}
+	ov := New{{ .oneOfMessageName }}()
 	ov.{{ .fieldName }} = New{{ .messageName }}()
 	Copy{{ .messageName }}(ov.{{ .fieldName }}, t.{{ .fieldName }})
 	dest.{{ .oneOfGroup }} = ov	

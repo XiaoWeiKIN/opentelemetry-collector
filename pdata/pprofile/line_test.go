@@ -164,26 +164,26 @@ func TestLineSwitchDictionary(t *testing.T) {
 			}(),
 			dst: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo")
+				d.StringTable().Append("", "test")
 
 				d.FunctionTable().AppendEmpty()
-				d.FunctionTable().AppendEmpty()
+				f := d.FunctionTable().AppendEmpty()
+				f.SetNameStrindex(1)
 				return d
 			}(),
 
 			wantLine: func() Line {
 				l := NewLine()
-				l.SetFunctionIndex(2)
+				l.SetFunctionIndex(1)
 				return l
 			}(),
 			wantDictionary: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo", "test")
+				d.StringTable().Append("", "test")
 
 				d.FunctionTable().AppendEmpty()
-				d.FunctionTable().AppendEmpty()
 				f := d.FunctionTable().AppendEmpty()
-				f.SetNameStrindex(2)
+				f.SetNameStrindex(1)
 				return d
 			}(),
 		},
@@ -234,7 +234,7 @@ func TestLineSwitchDictionary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			line := tt.line
 			dst := tt.dst
-			err := line.switchDictionary(tt.src, dst)
+			err := line.switchDictionary(tt.src, dst, newMergeIndex(dst))
 
 			if tt.wantErr == nil {
 				require.NoError(t, err)
@@ -265,9 +265,10 @@ func BenchmarkLineSwitchDictionary(b *testing.B) {
 	for b.Loop() {
 		b.StopTimer()
 		dst := NewProfilesDictionary()
+		mi := newMergeIndex(dst)
 		b.StartTimer()
 
-		_ = l.switchDictionary(src, dst)
+		_ = l.switchDictionary(src, dst, mi)
 	}
 }
 

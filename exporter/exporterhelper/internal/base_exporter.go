@@ -6,7 +6,10 @@ package internal // import "go.opentelemetry.io/collector/exporter/exporterhelpe
 import (
 	"context"
 	"errors"
+	"sync"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 
@@ -15,6 +18,8 @@ import (
 	"go.opentelemetry.io/collector/config/configretry"
 	"go.opentelemetry.io/collector/consumer"
 	"go.opentelemetry.io/collector/exporter"
+	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/metadata"
+	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/queue"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/queuebatch"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/request"
 	"go.opentelemetry.io/collector/exporter/exporterhelper/internal/sender"
@@ -29,7 +34,8 @@ type BaseExporter struct {
 	component.StartFunc
 	component.ShutdownFunc
 
-	Set exporter.Settings
+	Set    exporter.Settings
+	tracer trace.Tracer
 
 	// Message for the user to be added with an export failure message.
 	ExportFailureMessage string
@@ -44,8 +50,12 @@ type BaseExporter struct {
 
 	ConsumerOptions []consumer.Option
 
-	timeoutCfg TimeoutConfig
-	retryCfg   configretry.BackOffConfig
+	ExtraAttrs []attribute.KeyValue
+
+	obsMetrics         *ObsMetrics
+	obsMetricsShutdown func()
+	timeoutCfg         TimeoutConfig
+	retryCfg           configretry.BackOffConfig
 
 	queueBatchSettings queuebatch.Settings[request.Request]
 	queueCfg           configoptional.Optional[queuebatch.Config]
@@ -63,6 +73,19 @@ func NewBaseExporter(set exporter.Settings, signal pipeline.Signal, pusher sende
 		}
 	}
 
+	if be.obsMetrics == nil {
+		obsMetrics, err := queue.NewExporterObsMetrics(set.TelemetrySettings, set.ID, signal, be.ExtraAttrs)
+		if err != nil {
+			return nil, err
+		}
+		be.obsMetrics = &obsMetrics
+	}
+	be.obsMetricsShutdown = sync.OnceFunc(be.obsMetrics.Shutdown)
+
+	if be.tracer == nil {
+		be.tracer = metadata.Tracer(set.TelemetrySettings)
+	}
+
 	// Consumer Sender is always initialized.
 	be.firstSender = sender.NewSender(pusher)
 
@@ -77,26 +100,26 @@ func NewBaseExporter(set exporter.Settings, signal pipeline.Signal, pusher sende
 		be.firstSender = be.RetrySender
 	}
 
-	var err error
-	be.firstSender, err = newObsReportSender(set, signal, be.firstSender)
-	if err != nil {
-		return nil, err
-	}
+	batchEnabled := be.queueCfg.HasValue() && be.queueCfg.Get().Batch.HasValue()
+	be.firstSender = newObsReportSender(set, signal, *be.obsMetrics, batchEnabled, be.tracer, be.firstSender)
 
-	if be.queueCfg.HasValue() && be.queueCfg.Get().Batch.HasValue() {
+	if batchEnabled {
 		// Batcher mutates the data.
 		be.ConsumerOptions = append(be.ConsumerOptions, consumer.WithCapabilities(consumer.Capabilities{MutatesData: true}))
 	}
 
 	if be.queueCfg.HasValue() {
 		qSet := queuebatch.AllSettings[request.Request]{
-			Settings:  be.queueBatchSettings,
-			Signal:    signal,
-			ID:        set.ID,
-			Telemetry: set.TelemetrySettings,
+			Settings:   be.queueBatchSettings,
+			Signal:     signal,
+			ID:         set.ID,
+			Telemetry:  set.TelemetrySettings,
+			ObsMetrics: *be.obsMetrics,
 		}
+		var err error
 		be.QueueSender, err = NewQueueSender(qSet, *be.queueCfg.Get(), be.ExportFailureMessage, be.firstSender)
 		if err != nil {
+			be.obsMetricsShutdown()
 			return nil, err
 		}
 		be.firstSender = be.QueueSender
@@ -133,6 +156,7 @@ func (be *BaseExporter) Start(ctx context.Context, host component.Host) error {
 }
 
 func (be *BaseExporter) Shutdown(ctx context.Context) error {
+	defer be.obsMetricsShutdown()
 	var err error
 
 	// First shutdown the retry sender, so the queue sender can flush the queue without retries.
@@ -154,6 +178,13 @@ func (be *BaseExporter) Shutdown(ctx context.Context) error {
 func WithStart(start component.StartFunc) Option {
 	return func(o *BaseExporter) error {
 		o.StartFunc = start
+		return nil
+	}
+}
+
+func WithTracer(tracer trace.Tracer) Option {
+	return func(o *BaseExporter) error {
+		o.tracer = tracer
 		return nil
 	}
 }
@@ -239,6 +270,20 @@ func WithQueueBatch(cfg configoptional.Optional[queuebatch.Config], set queuebat
 func WithCapabilities(capabilities consumer.Capabilities) Option {
 	return func(o *BaseExporter) error {
 		o.ConsumerOptions = append(o.ConsumerOptions, consumer.WithCapabilities(capabilities))
+		return nil
+	}
+}
+
+func WithAttributes(attrs ...attribute.KeyValue) Option {
+	return func(o *BaseExporter) error {
+		o.ExtraAttrs = attrs
+		return nil
+	}
+}
+
+func WithObsMetrics(obsMetrics ObsMetrics) Option {
+	return func(o *BaseExporter) error {
+		o.obsMetrics = &obsMetrics
 		return nil
 	}
 }

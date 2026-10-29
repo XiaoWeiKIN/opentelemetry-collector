@@ -56,10 +56,12 @@ func TestSampleSwitchDictionary(t *testing.T) {
 			}(),
 			dst: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo")
+				d.StringTable().Append("", "test")
 
 				d.AttributeTable().AppendEmpty()
 				d.AttributeTable().AppendEmpty()
+				a := d.AttributeTable().AppendEmpty()
+				a.SetKeyStrindex(1)
 				return d
 			}(),
 
@@ -70,12 +72,12 @@ func TestSampleSwitchDictionary(t *testing.T) {
 			}(),
 			wantDictionary: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
-				d.StringTable().Append("", "foo", "test")
+				d.StringTable().Append("", "test")
 
 				d.AttributeTable().AppendEmpty()
 				d.AttributeTable().AppendEmpty()
 				a := d.AttributeTable().AppendEmpty()
-				a.SetKeyStrindex(2)
+				a.SetKeyStrindex(1)
 				return d
 			}(),
 		},
@@ -121,6 +123,29 @@ func TestSampleSwitchDictionary(t *testing.T) {
 			}(),
 			wantDictionary: NewProfilesDictionary(),
 			wantErr:        errors.New("invalid attribute index 2"),
+		},
+		{
+			name: "with a negative attribute index",
+			sample: func() Sample {
+				s := NewSample()
+				s.AttributeIndices().Append(-1)
+				return s
+			}(),
+
+			src: func() ProfilesDictionary {
+				d := NewProfilesDictionary()
+				d.AttributeTable().AppendEmpty()
+				return d
+			}(),
+			dst: NewProfilesDictionary(),
+
+			wantSample: func() Sample {
+				s := NewSample()
+				s.AttributeIndices().Append(-1)
+				return s
+			}(),
+			wantDictionary: NewProfilesDictionary(),
+			wantErr:        errors.New("invalid attribute index -1"),
 		},
 		{
 			name: "with an existing link",
@@ -221,8 +246,13 @@ func TestSampleSwitchDictionary(t *testing.T) {
 			}(),
 			dst: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
+				d.LocationTable().AppendEmpty()
+				d.LocationTable().AppendEmpty().SetAddress(2)
+
 				d.StackTable().AppendEmpty()
 				d.StackTable().AppendEmpty()
+				s := d.StackTable().AppendEmpty()
+				s.LocationIndices().Append(1)
 				return d
 			}(),
 
@@ -233,12 +263,13 @@ func TestSampleSwitchDictionary(t *testing.T) {
 			}(),
 			wantDictionary: func() ProfilesDictionary {
 				d := NewProfilesDictionary()
+				d.LocationTable().AppendEmpty()
 				d.LocationTable().AppendEmpty().SetAddress(2)
 
 				d.StackTable().AppendEmpty()
 				d.StackTable().AppendEmpty()
 				s := d.StackTable().AppendEmpty()
-				s.LocationIndices().Append(0)
+				s.LocationIndices().Append(1)
 				return d
 			}(),
 		},
@@ -289,7 +320,7 @@ func TestSampleSwitchDictionary(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			sample := tt.sample
 			dst := tt.dst
-			err := sample.switchDictionary(tt.src, dst)
+			err := sample.switchDictionary(tt.src, dst, newMergeIndex(dst))
 
 			if tt.wantErr == nil {
 				require.NoError(t, err)
@@ -322,9 +353,11 @@ func BenchmarkSampleSwitchDictionary(b *testing.B) {
 	src.LinkTable().AppendEmpty()
 	src.LinkTable().AppendEmpty().SetSpanID(pcommon.SpanID([8]byte{1, 2, 3, 4, 5, 6, 7, 8}))
 
+	mi := newMergeIndex(dst)
+
 	b.ReportAllocs()
 
 	for b.Loop() {
-		_ = s.switchDictionary(src, dst)
+		_ = s.switchDictionary(src, dst, mi)
 	}
 }

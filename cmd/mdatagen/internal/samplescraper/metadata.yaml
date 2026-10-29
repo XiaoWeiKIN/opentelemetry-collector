@@ -3,23 +3,115 @@
 type: sample
 display_name: Sample Scraper
 description: This scraper is used for testing purposes to check the output of mdatagen.
-reaggregation_enabled: true
+override_value_enabled: true
 github_project: open-telemetry/opentelemetry-collector
 
-sem_conv_version: 1.38.0
+sem_conv_version: 1.40.0
 
 status:
   disable_codecov_badge: true
   class: scraper
   stability:
     stable: [metrics]
-    development: [logs]
+    development: [logs, profiles]
   distributions: []
   unsupported_platforms: [freebsd, illumos]
   codeowners:
     active: [dmitryax]
   warnings:
     - Any additional information that should be brought to the consumer's attention
+
+exported_configs:
+  sample_pkg:
+    $ref: ../samplepkg.sample_config
+
+config:
+  type: object
+  description: Configuration for the Sample Scraper.
+  properties:
+    controller_config:
+      $ref: /scraper/scraperhelper.controller_config
+      embed: true
+      go_struct:
+        anonymous: true
+    metrics_builder_config:
+      $ref: ./internal/metadata.metrics_builder_config
+      embed: true
+      go_struct:
+        anonymous: true
+    component:
+      type: component_id
+      description: Identifies the scraper, used for telemetry and logging.
+      go_struct:
+        field_name: ComponentID
+        custom_validator:
+    job_name:
+      description: Name of the scrape job, used to identify the source in telemetry.
+      type: string
+      minLength: 1
+      maxLength: 255
+      pattern: "^[a-zA-Z0-9_.-]+$"
+      default: "test_job"
+      go_struct:
+        custom_validator:
+    targets:
+      description: List of targets to scrape metrics from.
+      pointer: true
+      type: slice
+      values:
+        type: object
+        properties:
+          endpoint:
+            $ref: /config/confignet.addr_config
+            optional: true
+            default:
+              transport: ip4
+            go_struct:
+              optional_mode: default
+          interval:
+            type: duration
+            description: Polling interval for the scraper target.
+            optional: true
+            default: 10s
+            deprecated:
+              since: v0.160.0
+              note: Support for this property will be dropped soon.
+          labels:
+            description: Static key-value labels attached to all metrics from this target.
+            type: map
+            values:
+              type: string
+            default:
+              option1: value1
+              option2: value2
+          retry_count:
+            description: Number of retry attempts for failed scrapes.
+            type: int
+            default: 3
+            minimum: 0
+            maximum: 10
+          timeout_seconds:
+            description: Timeout in seconds for each scrape request.
+            type: double
+            default: 5.0
+            exclusiveMinimum: 0
+            exclusiveMaximum: 30
+        required: [labels]
+        go_struct:
+          private_fields: true
+      default:
+        - {} # one item with default values
+    log_level:
+      description: Logging level for the scraper.
+      type: string
+      enum: [debug, info, warn, error]
+      default: info
+    protocol:
+      description: Protocol used when connecting to scrape targets, reused from samplepkg.
+      $ref: ../samplepkg.protocol
+  required: [job_name, targets]
+  go_struct:
+    private_fields: true
 
 resource_attributes:
   map.resource.attr:
@@ -175,6 +267,20 @@ metrics:
     warnings:
       if_configured: This metric is deprecated and will be removed soon.
 
+  optional.metric.to_be_removed:
+    enabled: false
+    description: "[DEPRECATED] Gauge double metric disabled by default with if_enabled warning."
+    stability: deprecated
+    deprecated:
+      since: "1.0.0"
+      note: "This metric will be removed"
+    unit: "1"
+    gauge:
+      value_type: double
+    attributes: [string_attr]
+    warnings:
+      if_enabled: This metric is deprecated and will be removed soon.
+
   reaggregate.metric:
     enabled: true
     description: Metric for testing spatial reaggregation
@@ -195,4 +301,4 @@ metrics:
       monotonic: true
       aggregation_temporality: cumulative
     semantic_convention:
-      ref: https://github.com/open-telemetry/semantic-conventions/blob/v1.38.0/docs/system/system-metrics.md#metric-systemcputime
+      ref: system/system-metrics.md#metric-systemcputime

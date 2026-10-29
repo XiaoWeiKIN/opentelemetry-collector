@@ -172,7 +172,7 @@ func TestLogsScrapeController(t *testing.T) {
 				// wait until all calls to scrape have completed
 				if test.scrapeErr == nil {
 					require.Eventually(t, func() bool {
-						return sink.LogRecordCount() == (1+iterations)*(test.scrapers)
+						return sink.LogRecordCount() == (1+iterations)*test.scrapers
 					}, time.Second, time.Millisecond)
 				}
 
@@ -181,7 +181,7 @@ func TestLogsScrapeController(t *testing.T) {
 				}
 
 				spans := tel.SpanRecorder.Ended()
-				assertReceiverSpan(t, spans)
+				assertLogsReceiverSpan(t, spans)
 				testhelper.AssertScraperSpan(t, test.scrapeErr, spans, "scraper/scraper/ScrapeLogs")
 				assertLogsScraperObsMetrics(t, tel, receiverID, component.MustNewID("scraper"), test.scrapeErr, sink)
 			}
@@ -283,7 +283,7 @@ func TestMetricsScrapeController(t *testing.T) {
 				// wait until all calls to scrape have completed
 				if test.scrapeErr == nil {
 					require.Eventually(t, func() bool {
-						return sink.DataPointCount() == (1+iterations)*(test.scrapers)
+						return sink.DataPointCount() == (1+iterations)*test.scrapers
 					}, time.Second, time.Millisecond)
 				}
 
@@ -292,7 +292,7 @@ func TestMetricsScrapeController(t *testing.T) {
 				}
 
 				spans := tel.SpanRecorder.Ended()
-				assertReceiverSpan(t, spans)
+				assertMetricsReceiverSpan(t, spans)
 				testhelper.AssertScraperSpan(t, test.scrapeErr, spans, "scraper/scraper/ScrapeMetrics")
 				assertMetricsScraperObsMetrics(t, tel, receiverID, component.MustNewID("scraper"), test.scrapeErr, sink)
 			}
@@ -378,10 +378,21 @@ func getExpectedShutdownErr(test scraperTestCase) error {
 	return errs
 }
 
-func assertReceiverSpan(t *testing.T, spans []sdktrace.ReadOnlySpan) {
+func assertMetricsReceiverSpan(t *testing.T, spans []sdktrace.ReadOnlySpan) {
 	receiverSpan := false
 	for _, span := range spans {
 		if span.Name() == "receiver/receiver/MetricsReceived" {
+			receiverSpan = true
+			break
+		}
+	}
+	assert.True(t, receiverSpan)
+}
+
+func assertLogsReceiverSpan(t *testing.T, spans []sdktrace.ReadOnlySpan) {
+	receiverSpan := false
+	for _, span := range spans {
+		if span.Name() == "receiver/receiver/LogsReceived" {
 			receiverSpan = true
 			break
 		}
@@ -398,8 +409,7 @@ func assertLogsScraperObsMetrics(t *testing.T, tel *componenttest.Telemetry, rec
 	expectedScraped := int64(sink.LogRecordCount())
 	expectedErrored := int64(0)
 	if expectedErr != nil {
-		var partialError scrapererror.PartialScrapeError
-		if errors.As(expectedErr, &partialError) {
+		if partialError, ok := errors.AsType[scrapererror.PartialScrapeError](expectedErr); ok {
 			expectedErrored = int64(partialError.Failed)
 		} else {
 			expectedScraped = int64(0)
@@ -412,7 +422,8 @@ func assertLogsScraperObsMetrics(t *testing.T, tel *componenttest.Telemetry, rec
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(receiverKey, receiver.String()),
-					attribute.String(scraperKey, scraper.String())),
+					attribute.String(scraperKey, scraper.String()),
+				),
 				Value: expectedScraped,
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -422,7 +433,8 @@ func assertLogsScraperObsMetrics(t *testing.T, tel *componenttest.Telemetry, rec
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(receiverKey, receiver.String()),
-					attribute.String(scraperKey, scraper.String())),
+					attribute.String(scraperKey, scraper.String()),
+				),
 				Value: expectedErrored,
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -437,8 +449,7 @@ func assertMetricsScraperObsMetrics(t *testing.T, tel *componenttest.Telemetry, 
 	expectedScraped := int64(sink.DataPointCount())
 	expectedErrored := int64(0)
 	if expectedErr != nil {
-		var partialError scrapererror.PartialScrapeError
-		if errors.As(expectedErr, &partialError) {
+		if partialError, ok := errors.AsType[scrapererror.PartialScrapeError](expectedErr); ok {
 			expectedErrored = int64(partialError.Failed)
 		} else {
 			expectedScraped = int64(0)
@@ -451,7 +462,8 @@ func assertMetricsScraperObsMetrics(t *testing.T, tel *componenttest.Telemetry, 
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(receiverKey, receiver.String()),
-					attribute.String(scraperKey, scraper.String())),
+					attribute.String(scraperKey, scraper.String()),
+				),
 				Value: expectedScraped,
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())
@@ -460,7 +472,8 @@ func assertMetricsScraperObsMetrics(t *testing.T, tel *componenttest.Telemetry, 
 			{
 				Attributes: attribute.NewSet(
 					attribute.String(receiverKey, receiver.String()),
-					attribute.String(scraperKey, scraper.String())),
+					attribute.String(scraperKey, scraper.String()),
+				),
 				Value: expectedErrored,
 			},
 		}, metricdatatest.IgnoreTimestamp(), metricdatatest.IgnoreExemplars())

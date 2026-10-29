@@ -173,9 +173,9 @@ func (e *baseExporter) pushProfiles(ctx context.Context, td pprofile.Profiles) e
 	return e.export(ctx, e.profilesURL, request, e.profilesPartialSuccessHandler)
 }
 
-func (e *baseExporter) export(ctx context.Context, url string, request []byte, partialSuccessHandler partialSuccessHandler) error {
-	e.logger.Debug("Preparing to make HTTP request", zap.String("url", url))
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(request))
+func (e *baseExporter) export(ctx context.Context, requestURL string, request []byte, partialSuccessHandler partialSuccessHandler) error {
+	e.logger.Debug("Preparing to make HTTP request", zap.String("url", requestURL))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(request))
 	if err != nil {
 		return consumererror.NewPermanent(err)
 	}
@@ -193,20 +193,35 @@ func (e *baseExporter) export(ctx context.Context, url string, request []byte, p
 
 	resp, err := e.client.Do(req)
 	if err != nil {
+		if urlErr, ok := errors.AsType[*url.Error](err); ok {
+			urlErr.URL = req.URL.String()
+		}
 		return fmt.Errorf("failed to make an HTTP request: %w", err)
 	}
 
 	defer func() {
 		// Discard any remaining response body when we are done reading.
 		_, _ = io.CopyN(io.Discard, resp.Body, maxHTTPResponseReadBytes)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	}()
 
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
-		return handlePartialSuccessResponse(resp, partialSuccessHandler)
+		if err := handlePartialSuccessResponse(resp, partialSuccessHandler); err != nil {
+			return consumererror.NewPermanent(err)
+		}
+		return nil
 	}
 
 	respStatus := readResponseStatus(resp)
+
+	// Report the URL the transport actually sent the request to. Middleware
+	// RoundTrippers may clone the request and rewrite its URL, leaving req with
+	// only the configured placeholder. Redact userinfo: the rewritten URL is not
+	// under the exporter's control and the error ends up in logs.
+	destURL := req.URL.Redacted()
+	if resp.Request != nil && resp.Request.URL != nil {
+		destURL = resp.Request.URL.Redacted()
+	}
 
 	// Format the error message. Use the status if it is present in the response.
 	var errString string
@@ -214,11 +229,13 @@ func (e *baseExporter) export(ctx context.Context, url string, request []byte, p
 	if respStatus != nil {
 		errString = fmt.Sprintf(
 			"error exporting items, request to %s responded with HTTP Status Code %d, Message=%s, Details=%v",
-			url, resp.StatusCode, respStatus.Message, respStatus.Details)
+			destURL, resp.StatusCode, respStatus.Message, respStatus.Details,
+		)
 	} else {
 		errString = fmt.Sprintf(
 			"error exporting items, request to %s responded with HTTP Status Code %d",
-			url, resp.StatusCode)
+			destURL, resp.StatusCode,
+		)
 	}
 	formattedErr = statusutil.NewStatusFromMsgAndHTTPCode(errString, resp.StatusCode).Err()
 

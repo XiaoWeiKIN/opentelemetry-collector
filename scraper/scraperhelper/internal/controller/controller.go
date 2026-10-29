@@ -25,7 +25,7 @@ type Controller[T component.Component] struct {
 	Timeout            time.Duration
 
 	Scrapers   []T
-	scrapeFunc func(*Controller[T])
+	scrapeFunc func(context.Context, *Controller[T]) error
 	tickerCh   <-chan time.Time
 
 	done chan struct{}
@@ -38,7 +38,7 @@ func NewController[T component.Component](
 	cfg *ControllerConfig,
 	rSet receiver.Settings,
 	scrapers []T,
-	scrapeFunc func(*Controller[T]),
+	scrapeFunc func(context.Context, *Controller[T]) error,
 	tickerCh <-chan time.Time,
 ) (*Controller[T], error) {
 	obsrecv, err := receiverhelper.NewObsReport(receiverhelper.ObsReportSettings{
@@ -61,6 +61,14 @@ func NewController[T component.Component](
 		Obsrecv:            obsrecv,
 	}
 
+	if cfg.Timeout > 0 {
+		cs.scrapeFunc = func(ctx context.Context, c *Controller[T]) error {
+			ctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+			defer cancel()
+			return scrapeFunc(ctx, c)
+		}
+	}
+
 	return cs, nil
 }
 
@@ -72,7 +80,7 @@ func (sc *Controller[T]) Start(ctx context.Context, host component.Host) error {
 		}
 	}
 
-	sc.startScraping()
+	sc.startScraping(ctx)
 	return nil
 }
 
@@ -91,7 +99,8 @@ func (sc *Controller[T]) Shutdown(ctx context.Context) error {
 
 // startScraping initiates a ticker that calls Scrape based on the configured
 // collection interval.
-func (sc *Controller[T]) startScraping() {
+func (sc *Controller[T]) startScraping(ctx context.Context) {
+	ctx = context.WithoutCancel(ctx)
 	sc.wg.Go(func() {
 		if sc.initialDelay > 0 {
 			select {
@@ -107,14 +116,24 @@ func (sc *Controller[T]) startScraping() {
 
 			sc.tickerCh = ticker.C
 		}
-		// Call scrape method during initialization to ensure
-		// that scrapers start from when the component starts
-		// instead of waiting for the full duration to start.
-		sc.scrapeFunc(sc)
+
 		for {
+			// Call scrape method immediately to ensure
+			// that scrapers start from when the component starts
+			// instead of waiting for the full duration to start.
+			_ = sc.scrapeFunc(ctx, sc)
+
+			// If sc.scrapeFunc is delayed, sc.tickerCh and sc.done
+			// can both be ready and, without this, we aren't
+			// guaranteed to shutdown.
+			select {
+			case <-sc.done:
+				return
+			default:
+			}
+
 			select {
 			case <-sc.tickerCh:
-				sc.scrapeFunc(sc)
 			case <-sc.done:
 				return
 			}
@@ -131,14 +150,4 @@ func GetSettings(sType component.Type, rSet receiver.Settings) scraper.Settings 
 		TelemetrySettings: telemetry,
 		BuildInfo:         rSet.BuildInfo,
 	}
-}
-
-// WithScrapeContext will return a context that has no deadline if timeout is 0
-// which implies no explicit timeout had occurred, otherwise, a context
-// with a deadline of the provided timeout is returned.
-func WithScrapeContext(timeout time.Duration) (context.Context, context.CancelFunc) {
-	if timeout == 0 {
-		return context.WithCancel(context.Background())
-	}
-	return context.WithTimeout(context.Background(), timeout)
 }

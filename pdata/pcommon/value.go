@@ -4,11 +4,13 @@
 package pcommon // import "go.opentelemetry.io/collector/pdata/pcommon"
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math"
 	"strconv"
+	"strings"
 
 	"go.opentelemetry.io/collector/pdata/internal"
 )
@@ -75,7 +77,7 @@ func NewValueEmpty() Value {
 
 // NewValueStr creates a new Value with the given string value.
 func NewValueStr(v string) Value {
-	ov := internal.NewAnyValueStringValue()
+	ov := internal.NewAnyValue_StringValue()
 	ov.StringValue = v
 	orig := internal.NewAnyValue()
 	orig.Value = ov
@@ -84,7 +86,7 @@ func NewValueStr(v string) Value {
 
 // NewValueInt creates a new Value with the given int64 value.
 func NewValueInt(v int64) Value {
-	ov := internal.NewAnyValueIntValue()
+	ov := internal.NewAnyValue_IntValue()
 	ov.IntValue = v
 	orig := internal.NewAnyValue()
 	orig.Value = ov
@@ -93,7 +95,7 @@ func NewValueInt(v int64) Value {
 
 // NewValueDouble creates a new Value with the given float64 value.
 func NewValueDouble(v float64) Value {
-	ov := internal.NewAnyValueDoubleValue()
+	ov := internal.NewAnyValue_DoubleValue()
 	ov.DoubleValue = v
 	orig := internal.NewAnyValue()
 	orig.Value = ov
@@ -102,7 +104,7 @@ func NewValueDouble(v float64) Value {
 
 // NewValueBool creates a new Value with the given bool value.
 func NewValueBool(v bool) Value {
-	ov := internal.NewAnyValueBoolValue()
+	ov := internal.NewAnyValue_BoolValue()
 	ov.BoolValue = v
 	orig := internal.NewAnyValue()
 	orig.Value = ov
@@ -111,7 +113,7 @@ func NewValueBool(v bool) Value {
 
 // NewValueMap creates a new Value of map type.
 func NewValueMap() Value {
-	ov := internal.NewAnyValueKvlistValue()
+	ov := internal.NewAnyValue_KvlistValue()
 	ov.KvlistValue = internal.NewKeyValueList()
 	orig := internal.NewAnyValue()
 	orig.Value = ov
@@ -120,7 +122,7 @@ func NewValueMap() Value {
 
 // NewValueSlice creates a new Value of array type.
 func NewValueSlice() Value {
-	ov := internal.NewAnyValueArrayValue()
+	ov := internal.NewAnyValue_ArrayValue()
 	ov.ArrayValue = internal.NewArrayValue()
 	orig := internal.NewAnyValue()
 	orig.Value = ov
@@ -129,7 +131,7 @@ func NewValueSlice() Value {
 
 // NewValueBytes creates a new empty Value of byte type.
 func NewValueBytes() Value {
-	ov := internal.NewAnyValueBytesValue()
+	ov := internal.NewAnyValue_BytesValue()
 	orig := internal.NewAnyValue()
 	orig.Value = ov
 	return newValue(orig, internal.NewState())
@@ -280,11 +282,7 @@ func (v Value) Bytes() ByteSlice {
 // Calling this function on zero-initialized Value will cause a panic.
 func (v Value) SetStr(sv string) {
 	v.getState().AssertMutable()
-	// Delete everything but the AnyValue object itself.
-	internal.DeleteAnyValue(v.getOrig(), false)
-	ov := internal.NewAnyValueStringValue()
-	ov.StringValue = sv
-	v.getOrig().Value = ov
+	v.getOrig().SetStringValue(sv)
 }
 
 // SetInt replaces the int64 value associated with this Value,
@@ -292,11 +290,7 @@ func (v Value) SetStr(sv string) {
 // Calling this function on zero-initialized Value will cause a panic.
 func (v Value) SetInt(iv int64) {
 	v.getState().AssertMutable()
-	// Delete everything but the AnyValue object itself.
-	internal.DeleteAnyValue(v.getOrig(), false)
-	ov := internal.NewAnyValueIntValue()
-	ov.IntValue = iv
-	v.getOrig().Value = ov
+	v.getOrig().SetIntValue(iv)
 }
 
 // SetDouble replaces the float64 value associated with this Value,
@@ -304,11 +298,7 @@ func (v Value) SetInt(iv int64) {
 // Calling this function on zero-initialized Value will cause a panic.
 func (v Value) SetDouble(dv float64) {
 	v.getState().AssertMutable()
-	// Delete everything but the AnyValue object itself.
-	internal.DeleteAnyValue(v.getOrig(), false)
-	ov := internal.NewAnyValueDoubleValue()
-	ov.DoubleValue = dv
-	v.getOrig().Value = ov
+	v.getOrig().SetDoubleValue(dv)
 }
 
 // SetBool replaces the bool value associated with this Value,
@@ -316,11 +306,7 @@ func (v Value) SetDouble(dv float64) {
 // Calling this function on zero-initialized Value will cause a panic.
 func (v Value) SetBool(bv bool) {
 	v.getState().AssertMutable()
-	// Delete everything but the AnyValue object itself.
-	internal.DeleteAnyValue(v.getOrig(), false)
-	ov := internal.NewAnyValueBoolValue()
-	ov.BoolValue = bv
-	v.getOrig().Value = ov
+	v.getOrig().SetBoolValue(bv)
 }
 
 // SetEmptyBytes sets value to an empty byte slice and returns it.
@@ -329,7 +315,7 @@ func (v Value) SetEmptyBytes() ByteSlice {
 	v.getState().AssertMutable()
 	// Delete everything but the AnyValue object itself.
 	internal.DeleteAnyValue(v.getOrig(), false)
-	bv := internal.NewAnyValueBytesValue()
+	bv := internal.NewAnyValue_BytesValue()
 	v.getOrig().Value = bv
 	return ByteSlice(internal.NewByteSliceWrapper(&bv.BytesValue, v.getState()))
 }
@@ -340,7 +326,7 @@ func (v Value) SetEmptyMap() Map {
 	v.getState().AssertMutable()
 	// Delete everything but the AnyValue object itself.
 	internal.DeleteAnyValue(v.getOrig(), false)
-	ov := internal.NewAnyValueKvlistValue()
+	ov := internal.NewAnyValue_KvlistValue()
 	ov.KvlistValue = internal.NewKeyValueList()
 	v.getOrig().Value = ov
 	return newMap(&ov.KvlistValue.Values, v.getState())
@@ -352,7 +338,7 @@ func (v Value) SetEmptySlice() Slice {
 	v.getState().AssertMutable()
 	// Delete everything but the AnyValue object itself.
 	internal.DeleteAnyValue(v.getOrig(), false)
-	ov := internal.NewAnyValueArrayValue()
+	ov := internal.NewAnyValue_ArrayValue()
 	ov.ArrayValue = internal.NewArrayValue()
 	v.getOrig().Value = ov
 	return newSlice(&ov.ArrayValue.Values, v.getState())
@@ -401,26 +387,47 @@ func (v Value) AsString() string {
 		return strconv.FormatInt(v.Int(), 10)
 
 	case ValueTypeMap:
-		jsonStr, _ := json.Marshal(v.Map().AsRaw())
-		return string(jsonStr)
+		return marshalJSONNoHTMLEscape(v.Map().AsRaw())
 
 	case ValueTypeBytes:
 		return base64.StdEncoding.EncodeToString(*v.Bytes().getOrig())
 
 	case ValueTypeSlice:
-		jsonStr, _ := json.Marshal(v.Slice().AsRaw())
-		return string(jsonStr)
+		return marshalJSONNoHTMLEscape(v.Slice().AsRaw())
 
 	default:
 		return fmt.Sprintf("<Unknown OpenTelemetry attribute value type %q>", v.Type())
 	}
 }
 
+// marshalJSONNoHTMLEscape marshals v as JSON without HTML-escaping "<", ">",
+// and "&". This matches the behavior of AsString for ValueTypeStr (which
+// returns the raw string) and keeps structured values (maps, slices) free
+// of escape sequences like "\u003c" that are only meaningful in HTML contexts.
+func marshalJSONNoHTMLEscape(v any) string {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	// Encode cannot fail for the map/slice values produced by AsRaw(), which
+	// only contain primitive types, so the error is intentionally ignored —
+	// consistent with the json.Marshal calls it replaces.
+	_ = enc.Encode(v)
+	// json.Encoder.Encode always appends a trailing newline; strip it so the
+	// output matches json.Marshal.
+	return strings.TrimRight(buf.String(), "\n")
+}
+
 // See https://cs.opensource.google/go/go/+/refs/tags/go1.17.7:src/encoding/json/encode.go;l=585.
 // This allows us to avoid using reflection.
 func float64AsString(f float64) string {
-	if math.IsInf(f, 0) || math.IsNaN(f) {
-		return "json: unsupported value: " + strconv.FormatFloat(f, 'g', -1, 64)
+	if math.IsNaN(f) {
+		return "NaN"
+	}
+	if math.IsInf(f, 1) {
+		return "Infinity"
+	}
+	if math.IsInf(f, -1) {
+		return "-Infinity"
 	}
 
 	// Convert as if by ES6 number to string conversion.

@@ -2,12 +2,12 @@
 # OTLP Receiver
 | Status        |           |
 | ------------- |-----------|
-| Stability     | [development]: profiles   |
+| Stability     | [alpha]: profiles   |
 |               | [stable]: traces, metrics, logs   |
 | Distributions | [core], [contrib], [k8s], [otlp] |
 | Issues        | [![Open issues](https://img.shields.io/github/issues-search/open-telemetry/opentelemetry-collector?query=is%3Aissue%20is%3Aopen%20label%3Areceiver%2Fotlp%20&label=open&color=orange&logo=opentelemetry)](https://github.com/open-telemetry/opentelemetry-collector/issues?q=is%3Aopen+is%3Aissue+label%3Areceiver%2Fotlp) [![Closed issues](https://img.shields.io/github/issues-search/open-telemetry/opentelemetry-collector?query=is%3Aissue%20is%3Aclosed%20label%3Areceiver%2Fotlp%20&label=closed&color=blue&logo=opentelemetry)](https://github.com/open-telemetry/opentelemetry-collector/issues?q=is%3Aclosed+is%3Aissue+label%3Areceiver%2Fotlp) |
 
-[development]: https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/component-stability.md#development
+[alpha]: https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/component-stability.md#alpha
 [stable]: https://github.com/open-telemetry/opentelemetry-collector/blob/main/docs/component-stability.md#stable
 [core]: https://github.com/open-telemetry/opentelemetry-collector-releases/tree/main/distributions/otelcol
 [contrib]: https://github.com/open-telemetry/opentelemetry-collector-releases/tree/main/distributions/otelcol-contrib
@@ -37,9 +37,30 @@ The following settings are configurable:
 
 - `endpoint` (default = localhost:4317 for grpc protocol, localhost:4318 http protocol):
   host:port to which the receiver is going to receive data. The valid syntax is
-  described at https://github.com/grpc/grpc/blob/master/doc/naming.md. See our 
+  described at https://github.com/grpc/grpc/blob/master/doc/naming.md. See our
   [security best practices doc](https://opentelemetry.io/docs/security/config-best-practices/#protect-against-denial-of-service-attacks)
   to understand how to set the endpoint in different environments.
+
+## Profiles Development Version
+
+This implements the Profiles development-version mechanism defined in the
+[OTLP specification](https://github.com/open-telemetry/opentelemetry-proto/blob/1b0835ea26b8499510eae45a1ffa13a2b51d30c6/docs/specification.md#profiles-development-version).
+The Profiles receiver supports only the development version corresponding to
+its compiled-in schema, exposed as
+[`pprofileotlp.DevelopmentVersion`](../../pdata/pprofile/pprofileotlp/version.go).
+It is not configurable.
+
+Missing version metadata identifies the initial development version. Malformed,
+repeated, or unsupported `otlp-profiles-development-version` gRPC metadata or
+`OTLP-Profiles-Development-Version` HTTP headers are rejected before decoding,
+with gRPC `INVALID_ARGUMENT` or HTTP `400 Bad Request` respectively.
+
+The Collector decodes and processes incoming data, then serializes new export
+requests. Its OTLP exporters set the version for their own schema; the incoming
+version metadata does not need to be preserved through the pipeline. There is
+no version negotiation or conversion between development versions. When a
+future build adopts a new development version, senders and receivers must use
+compatible schemas; a newer receiver will not automatically accept older versions.
 
 ## Advanced Configuration
 

@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 
 	"go.uber.org/multierr"
@@ -14,12 +15,14 @@ import (
 
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/component/componentstatus"
-	"go.opentelemetry.io/collector/confmap"
 	"go.opentelemetry.io/collector/extension"
 	"go.opentelemetry.io/collector/extension/extensioncapabilities"
+	"go.opentelemetry.io/collector/pipeline"
+	"go.opentelemetry.io/collector/service/hostcapabilities"
 	"go.opentelemetry.io/collector/service/internal/attribute"
 	"go.opentelemetry.io/collector/service/internal/builders"
 	"go.opentelemetry.io/collector/service/internal/componentattribute"
+	"go.opentelemetry.io/collector/service/internal/moduleinfo"
 	"go.opentelemetry.io/collector/service/internal/status"
 	"go.opentelemetry.io/collector/service/internal/zpages"
 )
@@ -48,7 +51,8 @@ func (bes *Extensions) Start(ctx context.Context, host component.Host) error {
 			instanceID,
 			componentstatus.NewEvent(componentstatus.StatusStarting),
 		)
-		if err := ext.Start(ctx, host); err != nil {
+		extHost := &hostWrapper{Host: host, reporter: bes.reporter, instanceID: instanceID}
+		if err := ext.Start(ctx, extHost); err != nil {
 			bes.reporter.ReportStatus(
 				instanceID,
 				componentstatus.NewPermanentErrorEvent(err),
@@ -67,8 +71,7 @@ func (bes *Extensions) Start(ctx context.Context, host component.Host) error {
 func (bes *Extensions) Shutdown(ctx context.Context) error {
 	bes.telemetry.Logger.Info("Stopping extensions...")
 	var errs error
-	for i := len(bes.extensionIDs) - 1; i >= 0; i-- {
-		extID := bes.extensionIDs[i]
+	for _, extID := range slices.Backward(bes.extensionIDs) {
 		instanceID := bes.instanceIDs[extID]
 		ext := bes.extMap[extID]
 		bes.reporter.ReportStatus(
@@ -115,13 +118,15 @@ func (bes *Extensions) NotifyPipelineNotReady() error {
 	return errs
 }
 
-func (bes *Extensions) NotifyConfig(ctx context.Context, conf *confmap.Conf) error {
+func (bes *Extensions) NotifyConfigSnapshot(ctx context.Context, configSnapshot extensioncapabilities.ConfigSnapshot) error {
+	if configSnapshot == nil {
+		return nil
+	}
 	var errs error
 	for _, extID := range bes.extensionIDs {
 		ext := bes.extMap[extID]
-		if cw, ok := ext.(extensioncapabilities.ConfigWatcher); ok {
-			clonedConf := confmap.NewFromStringMap(conf.ToStringMap())
-			errs = multierr.Append(errs, cw.NotifyConfig(ctx, clonedConf))
+		if cw, ok := ext.(extensioncapabilities.ConfigSnapshotWatcher); ok {
+			errs = multierr.Append(errs, cw.NotifyConfigSnapshot(ctx, configSnapshot))
 		}
 	}
 	return errs
@@ -236,4 +241,52 @@ func New(ctx context.Context, set Settings, cfg Config, options ...Option) (*Ext
 	}
 	exts.extensionIDs = order
 	return exts, nil
+}
+
+var (
+	_ componentstatus.Reporter          = (*hostWrapper)(nil)
+	_ component.Host                    = (*hostWrapper)(nil)
+	_ hostcapabilities.ModuleInfo       = (*hostWrapper)(nil)
+	_ hostcapabilities.ExposeExporters  = (*hostWrapper)(nil) //nolint:staticcheck // SA1019
+	_ hostcapabilities.ComponentFactory = (*hostWrapper)(nil)
+)
+
+type hostWrapper struct {
+	component.Host
+	reporter   status.Reporter
+	instanceID *componentstatus.InstanceID
+}
+
+func (host *hostWrapper) Report(event *componentstatus.Event) {
+	host.reporter.ReportStatus(host.instanceID, event)
+}
+
+func (host *hostWrapper) RegisterZPages(mux *http.ServeMux, pathPrefix string) {
+	if hostZPages, ok := host.Host.(interface {
+		RegisterZPages(mux *http.ServeMux, pathPrefix string)
+	}); ok {
+		hostZPages.RegisterZPages(mux, pathPrefix)
+	}
+}
+
+func (host *hostWrapper) GetModuleInfos() moduleinfo.ModuleInfos {
+	if mi, ok := host.Host.(hostcapabilities.ModuleInfo); ok {
+		return mi.GetModuleInfos()
+	}
+	return moduleinfo.ModuleInfos{}
+}
+
+//nolint:staticcheck // SA1019 forwards the deprecated hostcapabilities.ExposeExporters capability.
+func (host *hostWrapper) GetExporters() map[pipeline.Signal]map[component.ID]component.Component {
+	if ee, ok := host.Host.(hostcapabilities.ExposeExporters); ok {
+		return ee.GetExporters()
+	}
+	return nil
+}
+
+func (host *hostWrapper) GetFactory(kind component.Kind, componentType component.Type) component.Factory {
+	if cf, ok := host.Host.(hostcapabilities.ComponentFactory); ok {
+		return cf.GetFactory(kind, componentType)
+	}
+	return nil
 }

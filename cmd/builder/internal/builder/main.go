@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/template"
 	"time"
@@ -98,6 +99,9 @@ func Generate(cfg *Config) error {
 		componentsTemplate,
 		goModTemplate,
 	} {
+		if tmpl == goModTemplate && cfg.SkipGetModules {
+			continue
+		}
 		if err := processAndWrite(cfg, tmpl, tmpl.Name(), cfg); err != nil {
 			return fmt.Errorf("failed to generate source file %q: %w", tmpl.Name(), err)
 		}
@@ -115,11 +119,11 @@ func Compile(cfg *Config) error {
 	}
 
 	cfg.Logger.Info("Compiling")
-
 	ldflags := "-s -w" // we strip the symbols by default for smaller binaries
 	gcflags := ""
+	binaryName := outputBinaryName(cfg.Distribution.Name)
 
-	args := []string{"build", "-trimpath", "-o", cfg.Distribution.Name}
+	args := []string{"build", "-trimpath", "-o", binaryName}
 	if cfg.Distribution.DebugCompilation {
 		cfg.Logger.Info("Debug compilation is enabled, the debug symbols will be left on the resulting binary")
 		ldflags = cfg.LDFlags
@@ -140,15 +144,30 @@ func Compile(cfg *Config) error {
 
 	args = append(args, "-ldflags="+ldflags, "-gcflags="+gcflags)
 
-	if cfg.Distribution.BuildTags != "" {
-		args = append(args, "-tags", cfg.Distribution.BuildTags)
+	if tags := cfg.Distribution.buildTags(); tags != "" {
+		args = append(args, "-tags", tags)
 	}
 	if _, err := runGoCommand(cfg, args...); err != nil {
 		return fmt.Errorf("%w: %s", errCompileFailed, err.Error())
 	}
-	cfg.Logger.Info("Compiled", zap.String("binary", fmt.Sprintf("%s/%s", cfg.Distribution.OutputPath, cfg.Distribution.Name)))
+	cfg.Logger.Info("Compiled", zap.String("binary", fmt.Sprintf("%s/%s", cfg.Distribution.OutputPath, binaryName)))
 
 	return nil
+}
+
+func outputBinaryName(name string) string {
+	goos, ok := os.LookupEnv("GOOS")
+	if !ok || goos == "" {
+		goos = runtime.GOOS
+	}
+
+	if !strings.EqualFold(goos, "windows") {
+		return name
+	}
+	if strings.EqualFold(filepath.Ext(name), ".exe") {
+		return name
+	}
+	return name + ".exe"
 }
 
 // GetModules retrieves the go modules, updating go.mod and go.sum in the process
@@ -181,7 +200,8 @@ func GetModules(cfg *Config) error {
 	if semver.MajorMinor(coreDepVersion) != betaVersion {
 		return fmt.Errorf(
 			"%w: core collector version calculated by component dependencies %q does not match configured version %q. %s",
-			ErrVersionMismatch, coreDepVersion, betaVersion, skipStrictMsg)
+			ErrVersionMismatch, coreDepVersion, betaVersion, skipStrictMsg,
+		)
 	}
 
 	for _, mod := range cfg.allComponents() {
@@ -199,7 +219,8 @@ func GetModules(cfg *Config) error {
 		if semver.MajorMinor(moduleDepVersion) != semver.MajorMinor(version) {
 			return fmt.Errorf(
 				"%w: component %q version calculated by dependencies %q does not match configured version %q. %s",
-				ErrVersionMismatch, module, moduleDepVersion, version, skipStrictMsg)
+				ErrVersionMismatch, module, moduleDepVersion, version, skipStrictMsg,
+			)
 		}
 	}
 
